@@ -2,16 +2,65 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover"/>
 <title>Couch Attack!</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Courier New',monospace;user-select:none;}
-canvas{display:block;width:100vw;height:100vh}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Courier New',monospace;user-select:none;overscroll-behavior:none;}
+canvas{display:block;width:100vw;height:100vh;touch-action:none;}
+
+/* ── Mobile touch controls ───────────────────────────────────── */
+#mobileControls{ display:none; position:fixed; inset:0; z-index:50; pointer-events:none; }
+#mobileControls.active{ display:block; }
+.mbtn{
+  position:absolute; pointer-events:auto; touch-action:none;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(40,40,50,.45); border:2px solid rgba(255,255,255,.35);
+  color:#fff; font-family:'Courier New',monospace; font-weight:bold;
+  border-radius:12px; -webkit-user-select:none; user-select:none;
+  padding:0; margin:0; outline:none; -webkit-appearance:none; appearance:none;
+  -webkit-tap-highlight-color:transparent;
+}
+.mbtn.active-touch{ background:rgba(120,120,140,.65); border-color:rgba(255,255,255,.7); }
+#dpad{ position:absolute; left:18px; bottom:18px; width:170px; height:170px; pointer-events:none; }
+#dpad .mbtn{ width:54px; height:54px; font-size:22px; }
+#btnUp{ left:58px; top:0; }
+#btnDown{ left:58px; top:113px; }
+#btnLeft{ left:0; top:58px; }
+#btnRight{ left:113px; top:58px; }
+#btnShoot{
+  position:absolute; right:26px; bottom:26px; width:96px; height:96px; border-radius:50%;
+  background:rgba(198,40,40,.55); border:3px solid rgba(255,255,255,.55); font-size:15px;
+}
+#btnShoot.active-touch{ background:rgba(239,83,80,.8); }
+
+#rotateOverlay{
+  display:none; position:fixed; inset:0; z-index:9999; background:#000; color:#fff;
+  align-items:center; justify-content:center; text-align:center; padding:30px;
+  font-family:'Courier New',monospace; font-size:20px; line-height:1.6;
+}
+@media (orientation:portrait) and (pointer:coarse){
+  #rotateOverlay{ display:flex; }
+}
 </style>
 </head>
 <body>
 <canvas id="gc"></canvas>
+
+<div id="mobileControls">
+  <div id="dpad">
+    <button id="btnUp" class="mbtn">▲</button>
+    <button id="btnDown" class="mbtn">▼</button>
+    <button id="btnLeft" class="mbtn">◀</button>
+    <button id="btnRight" class="mbtn">▶</button>
+  </div>
+  <button id="btnShoot" class="mbtn">FIRE</button>
+</div>
+
+<div id="rotateOverlay">
+  <div>🔄<br>Please rotate your device<br>to landscape to play</div>
+</div>
+
 <script>
 // ================================================================
 //  COUCH ATTACK! — 3D Island Shooter
@@ -46,6 +95,7 @@ const FOV_HALF = Math.PI * 0.32;
 const CAMERA_HEIGHT = 50; 
 
 //Main movement of everything
+//Main movement of everything
 function project(wx, wz, wy = 0){ 
   const dx = wx - player.x;
   const dz = wz - player.z;
@@ -56,23 +106,18 @@ function project(wx, wz, wy = 0){
   const x1 = dx * cosYaw - dz * sinYaw;
   const z1 = dx * sinYaw + dz * cosYaw;
 
-  // 2. PITCH ROTATION (Looking Up/Down - True 3D!)
-  const cosPitch = Math.cos(player.pitch);
-  const sinPitch = Math.sin(player.pitch);
+  // If the object is behind the player on the floor plane, don't render it
+  if (z1 < 1) return null; 
+
+  // 2. SCREEN PROJECTION
   const y1 = CAMERA_HEIGHT - wy; 
-
-  const y2 = y1 * cosPitch - z1 * sinPitch;
-  const z2 = y1 * sinPitch + z1 * cosPitch;
-
-  // If the object is behind the camera plane, don't waste rendering it
-  if (z2 < 1 || z1 < 1) return null; 
-
-  // 3. SCREEN PROJECTION
   const invZ = 1 / z1; 
   const fovFactor = W / (2 * Math.tan(FOV_HALF));
 
   const sx = W/2 + x1 * invZ * fovFactor;
-  const pitchOffset = Math.tan(player.pitch) * fovFactor;
+  
+  // Y-shearing for looking up/down
+  const pitchOffset = player.pitch * fovFactor;
   const sy = H * HORIZON - pitchOffset + y1 * invZ * fovFactor;
   
   // Scale the sprite based on distance and screen height
@@ -90,6 +135,7 @@ const LEVEL_DATA = [
     shape: 'circle',
     radius: 280,
     startingWave: 1,
+    difficultyOffset: 0,
     baseSpawnInterval: 110,
     enemies: ['beanbag', 'armchair'],
   },
@@ -99,9 +145,94 @@ const LEVEL_DATA = [
     shape: 'square',
     width: 600,
     depth: 600,
-    startingWave: 3,
+    startingWave: 1,
+    difficultyOffset: 2, 
     baseSpawnInterval: 80,
     enemies: ['beanbag', 'armchair', 'loveseat', 'sofa2'],
+    maxWaves: 5,           
+    boss: 'boss_futon',
+    // ── theme ──
+    wallColor: '#e27289', wallBase: '#6d4c41', wallHeight: 140,
+    hasCeiling: true, ceilColor: '#e27289',
+    floorTop: '#8d5524', floorBottom: '#c68642',
+    washTop: 'rgba(76,175,80,0.2)', washBottom: 'rgba(76,175,80,0.7)',
+    skyType: 'sunset'
+  },
+  {
+    id: 'level2',
+    name: 'Level 2: The Kitchen',
+    shape: 'square',
+    width: 700,
+    depth: 500, // A bit more rectangular
+    startingWave: 1,
+    difficultyOffset: 4, 
+    baseSpawnInterval: 75,
+    enemies: ['armchair', 'loveseat', 'sofa2', 'sofa3'],
+    maxWaves: 5,
+    boss: 'boss_futon', // Placeholder boss until you make a new one!
+    // ── theme ──
+    wallColor: '#f2ede1', wallBase: '#c9a876', wallHeight: 140,
+    hasCeiling: true, ceilColor: '#fafafa',
+    floorTop: '#d9cdb8', floorBottom: '#eee2c9',
+    washTop: 'rgba(255,255,255,0.05)', washBottom: 'rgba(190,190,180,0.35)',
+    skyType: 'day'
+  },
+  {
+    id: 'level3',
+    name: 'Level 3: The Basement',
+    shape: 'square',
+    width: 800,
+    depth: 800, // A large, open square
+    startingWave: 1,
+    difficultyOffset: 6, 
+    baseSpawnInterval: 70,
+    enemies: ['loveseat', 'sofa2', 'sofa3', 'sectional'],
+    maxWaves: 5,
+    boss: 'boss_futon',
+    // ── theme ──
+    wallColor: '#5b5f63', wallBase: '#2e3033', wallHeight: 130,
+    hasCeiling: true, ceilColor: '#26282b',
+    floorTop: '#3a3a3a', floorBottom: '#55534e',
+    washTop: 'rgba(0,0,0,0.25)', washBottom: 'rgba(0,0,0,0.55)',
+    skyType: 'void'
+  },
+  {
+    id: 'level4',
+    name: 'Level 4: The Bedroom',
+    shape: 'square',
+    width: 500,
+    depth: 600, // A tighter, claustrophobic space
+    startingWave: 1,
+    difficultyOffset: 8, 
+    baseSpawnInterval: 65,
+    enemies: ['sofa2', 'sofa3', 'sectional'],
+    maxWaves: 5,
+    boss: 'boss_futon',
+    // ── theme ──
+    wallColor: '#8574b0', wallBase: '#4a3f66', wallHeight: 140,
+    hasCeiling: true, ceilColor: '#3d3560',
+    floorTop: '#5b4636', floorBottom: '#7a6046',
+    washTop: 'rgba(90,60,140,0.12)', washBottom: 'rgba(90,60,140,0.4)',
+    skyType: 'night'
+  },
+  {
+    id: 'level5',
+    name: 'Level 5: The Backyard',
+    shape: 'square', // You might want to change this back to 'circle' later!
+    width: 1000,
+    depth: 1000, // Massive arena
+    startingWave: 1,
+    difficultyOffset: 10, 
+    baseSpawnInterval: 60,
+    enemies: ['armchair', 'sofa2', 'sofa3', 'sectional'],
+    maxWaves: 5,
+    boss: 'boss_futon',
+    // ── theme (open-air, no ceiling, wooden fence walls) ──
+    wallColor: '#8d6e4a', wallBase: '#5c4630', wallHeight: 90,
+    hasCeiling: false, ceilColor: '#000000',
+    floorTop: '#3d7a34', floorBottom: '#5fa84c',
+    washTop: 'rgba(101,67,33,0.06)', washBottom: 'rgba(101,67,33,0.28)',
+    skyType: 'outdoor'
   }
 ];
 
@@ -122,6 +253,10 @@ let waveAnimNew = 2;
 let gunCooldown=0, gunFireRate=18, gunDamage=1;
 let activePowerup=null, powerupTimer=0;
 const POWERUP_DURATION = 600;
+const POWERUP_COLOR = { rapidfire:'#00e5ff', heavyshot:'#ff9800', freeze:'#4fc3f7', fire:'#ff5722', health:'#e53935' };
+const POWERUP_ICON  = { rapidfire:'⚡', heavyshot:'💥', freeze:'❄', fire:'🔥', health:'❤' };
+const POWERUP_LABEL = { rapidfire:'RAPID', heavyshot:'HEAVY', freeze:'FREEZE', fire:'FIRE', health:'HEALTH' };
+const POWERUP_HUD_LABEL = { rapidfire:'⚡ RAPID FIRE', heavyshot:'💥 HEAVY SHOT', freeze:'❄ FROZEN SHOT', fire:'🔥 FIRE SHOT' };
 
 let hitFlash=0, shakeMag=0, shakeX=0, shakeY=0;
 let menuTime=0, menuRAF=null, gameRAF=null;
@@ -141,6 +276,7 @@ const controls = {
   pause: 'Escape'
 };
 let waitingForBind = null;
+let mouseSensitivity = parseFloat(localStorage.getItem('mouseSensitivity')) || 1.0;
 
 let bullets       = [];
 let enemies       = [];
@@ -181,7 +317,7 @@ function resumeGame() {
   gState = 'playing';
   cancelAnimationFrame(menuRAF);
   canvas.style.cursor = 'none';
-  if (canvas.requestPointerLock) canvas.requestPointerLock();
+  if (!isTouchDevice && canvas.requestPointerLock) canvas.requestPointerLock();
   gameRAF = requestAnimationFrame(gameLoop);
 }
 
@@ -200,9 +336,9 @@ document.addEventListener('pointerlockchange', () => {
 canvas.addEventListener('mousemove', e=>{
   if(gState==='playing'){
     if(document.pointerLockElement===canvas){
-      player.yaw += e.movementX * 0.0022;
-      player.pitch += e.movementY * 0.0022; 
-      player.pitch = clamp(player.pitch, -1.5, 1.5);
+      player.yaw += e.movementX * 0.0022 * mouseSensitivity;
+      player.pitch += e.movementY * 0.007 * mouseSensitivity; 
+      player.pitch = clamp(player.pitch, -2.8, 2.8);
     }
   } else {
     const r=canvas.getBoundingClientRect();
@@ -216,7 +352,7 @@ canvas.addEventListener('mousemove', e=>{
 });
 
 canvas.addEventListener('click', ()=>{ 
-  if(gState==='playing' && document.pointerLockElement!==canvas) {
+  if(!isTouchDevice && gState==='playing' && document.pointerLockElement!==canvas) {
     canvas.requestPointerLock(); 
   }
 });
@@ -231,6 +367,82 @@ canvas.addEventListener('mousedown', e=>{
 });
 canvas.addEventListener('mouseup', ()=>mouseDown=false);
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
+
+// ── mobile / touch support ───────────────────────────────────────
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const mobileControlsEl = document.getElementById('mobileControls');
+const rotateOverlayEl  = document.getElementById('rotateOverlay');
+
+// Drag-to-look: touching anywhere on the canvas (that isn't one of the dedicated
+// D-pad/FIRE buttons, which are separate elements above the canvas) starts a look
+// drag that tracks that same finger until it lifts off the screen.
+let lookPointerId = null, lookLastX = 0, lookLastY = 0;
+
+canvas.addEventListener('pointerdown', e=>{
+  if(e.pointerType !== 'touch') return;
+  if(gState !== 'playing'){
+    e.preventDefault();
+    // Menu/UI taps on touch devices, mirroring the desktop mousedown button handling
+    const r=canvas.getBoundingClientRect();
+    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    getButtons().forEach(b=>{ if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h) handleBtn(b.id); });
+    return;
+  }
+  if(lookPointerId === null){
+    e.preventDefault();
+    lookPointerId = e.pointerId;
+    lookLastX = e.clientX; lookLastY = e.clientY;
+  }
+});
+canvas.addEventListener('pointermove', e=>{
+  if(e.pointerType !== 'touch' || gState !== 'playing') return;
+  if(e.pointerId === lookPointerId){
+    const dx = e.clientX - lookLastX, dy = e.clientY - lookLastY;
+    player.yaw += dx * 0.0035 * mouseSensitivity;
+    player.pitch += dy * 0.011 * mouseSensitivity;
+    player.pitch = clamp(player.pitch, -2.8, 2.8);
+    lookLastX = e.clientX; lookLastY = e.clientY;
+  }
+});
+function releaseLookTouch(e){
+  if(e.pointerType !== 'touch') return;
+  if(e.pointerId === lookPointerId) lookPointerId = null;
+}
+canvas.addEventListener('pointerup', releaseLookTouch);
+canvas.addEventListener('pointercancel', releaseLookTouch);
+canvas.addEventListener('pointerleave', releaseLookTouch);
+
+if(isTouchDevice){
+  // Wires a press-and-hold button: fires onDown while pressed, onUp the moment the finger lifts (even if it slides off the button)
+  function bindHold(el, onDown, onUp){
+    el.addEventListener('pointerdown', e=>{
+      e.preventDefault(); e.stopPropagation();
+      try{ el.setPointerCapture(e.pointerId); }catch(err){}
+      el.classList.add('active-touch');
+      onDown();
+    });
+    const release = e=>{
+      e.preventDefault(); e.stopPropagation();
+      el.classList.remove('active-touch');
+      onUp();
+    };
+    el.addEventListener('pointerup', release);
+    el.addEventListener('pointercancel', release);
+    el.addEventListener('pointerleave', release);
+  }
+
+  bindHold(document.getElementById('btnUp'),    ()=>keys[controls.forward]=true,  ()=>keys[controls.forward]=false);
+  bindHold(document.getElementById('btnDown'),  ()=>keys[controls.backward]=true, ()=>keys[controls.backward]=false);
+  bindHold(document.getElementById('btnLeft'),   ()=>keys[controls.left]=true,     ()=>keys[controls.left]=false);
+  bindHold(document.getElementById('btnRight'),  ()=>keys[controls.right]=true,    ()=>keys[controls.right]=false);
+  bindHold(document.getElementById('btnShoot'),  ()=>mouseDown=true,               ()=>mouseDown=false);
+
+  // Best-effort landscape lock (silently ignored on browsers/devices that don't support it - the CSS rotate overlay is the reliable fallback)
+  window.addEventListener('touchstart', function tryLockOrientation(){
+    if(screen.orientation && screen.orientation.lock){ screen.orientation.lock('landscape').catch(()=>{}); }
+    window.removeEventListener('touchstart', tryLockOrientation);
+  }, {once:true});
+}
 
 // ── couch sprite drawing ─────────────────────────────────────────
 function drawBeanBag(w,h,col,acc,fl){
@@ -293,6 +505,7 @@ const COUCH_TYPES = [
   {id:'sofa2',    name:'2-Seat Sofa',   hp:4,pts:260, bw:92, bh:60, spd:0.60, col:'#27ae60',acc:'#1e8449', draw:drawSofa2    },
   {id:'sofa3',    name:'3-Seat Sofa',   hp:6,pts:420, bw:114,bh:65, spd:0.50, col:'#2980b9',acc:'#1a6fa8', draw:drawSofa3    },
   {id:'sectional',name:'Sectional',     hp:8,pts:720, bw:134,bh:74, spd:0.40, col:'#8e44ad',acc:'#6c3483', draw:drawSectional},
+  {id:'boss_futon', name:'The Final Futon', hp:45, pts:5000, bw:180, bh:90, spd:1.0, col:'#b71c1c', acc:'#7f0000', draw:drawSectional},
 ];
 
 // ── environment generation ───────────────────────────────────────
@@ -321,30 +534,61 @@ function generateEnvironment(levelConfig){
     const hw = levelConfig.width / 2;
     const hd = levelConfig.depth / 2;
     
-    // Generate baseboards/trim to outline the room walls
+    // Generate 30-unit wide wall panels (keeps the sorting algorithm happy)
     for(let x = -hw; x <= hw; x += 30) {
-      if(Math.abs(x) > 60) { // Leave a 120px gap for the North/South doors
-        roomProps.push({wx: x, wz: -hd, type: 'baseboard'});
-        roomProps.push({wx: x, wz: hd, type: 'baseboard'});
+      if(Math.abs(x) > 60) { 
+        roomProps.push({wx: x, wz: -hd, type: 'wall', wx1: x-15, wz1: -hd, wx2: x+15, wz2: -hd});
+        roomProps.push({wx: x, wz: hd, type: 'wall', wx1: x-15, wz1: hd, wx2: x+15, wz2: hd});
       }
     }
     for(let z = -hd; z <= hd; z += 30) {
-      if(Math.abs(z) > 60) { // Leave a 120px gap for the East/West doors
-        roomProps.push({wx: -hw, wz: z, type: 'baseboard'});
-        roomProps.push({wx: hw, wz: z, type: 'baseboard'});
+      if(Math.abs(z) > 60) { 
+        roomProps.push({wx: -hw, wz: z, type: 'wall', wx1: -hw, wz1: z-15, wx2: -hw, wz2: z+15});
+        roomProps.push({wx: hw, wz: z, type: 'wall', wx1: hw, wz1: z-15, wx2: hw, wz2: z+15});
       }
     }
     
-    // Add iconic Simpsons living room props
-    roomProps.push({wx: hw - 40, wz: hd - 40, type: 'tv'});
-    roomProps.push({wx: -hw + 40, wz: -hd, type: 'painting'});
+    // Add props themed to this specific level
+    if (levelConfig.id === 'level1') {
+      roomProps.push({wx: hw - 40, wz: hd - 40, type: 'tv'});
+      roomProps.push({wx: -hw + 40, wz: -hd, type: 'painting'});
+    } else if (levelConfig.id === 'level2') {
+      // ── The Kitchen ──
+      roomProps.push({wx: hw - 45, wz: -hd + 45, type: 'fridge'});
+      roomProps.push({wx: -20,     wz: -hd + 35, type: 'stove'});
+      roomProps.push({wx: 130,    wz: -hd + 32, type: 'counter'});
+      roomProps.push({wx: -140,   wz: -hd + 32, type: 'counter'});
+      roomProps.push({wx: -hw + 45, wz: hd - 55, type: 'wallcabinet'});
+      roomProps.push({wx: 0,      wz: 70,       type: 'table'});
+    } else if (levelConfig.id === 'level3') {
+      // ── The Basement ──
+      roomProps.push({wx: hw - 55, wz: -hd + 48, type: 'washer'});
+      roomProps.push({wx: hw - 55, wz: -hd + 120, type: 'dryer'});
+      roomProps.push({wx: -hw + 60, wz: -hd + 45, type: 'workbench'});
+      roomProps.push({wx: -hw + 20, wz: -hd + 45, type: 'pegboard'});
+      roomProps.push({wx: -hw + 70, wz: hd - 90, type: 'shelf'});
+      roomProps.push({wx: 0, wz: 0, type: 'hanginglight'});
+    } else if (levelConfig.id === 'level4') {
+      // ── The Bedroom ──
+      roomProps.push({wx: 0,        wz: hd - 95,  type: 'bed'});
+      roomProps.push({wx: 105,      wz: hd - 55,  type: 'nightstand'});
+      roomProps.push({wx: -hw + 55, wz: -hd + 55, type: 'dresser'});
+      roomProps.push({wx: -hw + 40, wz: 20,       type: 'wardrobe'});
+    } else if (levelConfig.id === 'level5') {
+      // ── The Backyard ──
+      roomProps.push({wx: hw - 80,  wz: hd - 80,  type: 'grill'});
+      roomProps.push({wx: 0,        wz: 30,       type: 'picnictable'});
+      roomProps.push({wx: -hw + 75, wz: -hd + 75, type: 'bush'});
+      roomProps.push({wx: -hw + 65, wz: hd - 110, type: 'bush'});
+      roomProps.push({wx: hw - 100, wz: -hd + 100, type: 'stump'});
+    }
   }
 }
 
 // ── environment drawing ──────────────────────────────────────────
 function getHorizonY() {
   const fovFactor = W / (2 * Math.tan(FOV_HALF));
-  return H * HORIZON - Math.tan(player.pitch) * fovFactor;
+  return H * HORIZON - player.pitch * fovFactor;
 }
 
 function drawSky(){
@@ -358,32 +602,168 @@ function drawSky(){
       g.addColorStop(0,'#042a5e'); g.addColorStop(.6,'#1060b8'); g.addColorStop(1,'#29b6f6');
       ctx.fillStyle=g; ctx.fillRect(0,0,W,drawHy);
       
-      const panX = -(player.yaw / TAU) * (W * 2);
+      // The panorama is exactly twice the screen width
+      const skyWidth = W * 2;
+      const panX = -(player.yaw / TAU) * skyWidth;
       const pitchOffset = hy - (H * HORIZON); // Shift clouds based on 3D horizon
+      
       const drawElements = () => {
         ctx.save(); ctx.translate(0, pitchOffset);
+        
+        // Draw the Sun
         const sx=W*.78, sy=H*.09;
         const sg=ctx.createRadialGradient(sx,sy,0,sx,sy,70);
         sg.addColorStop(0,'#fffde7'); sg.addColorStop(.3,'#fff176');
         sg.addColorStop(.7,'rgba(255,235,59,.3)'); sg.addColorStop(1,'rgba(255,255,59,0)');
         ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(sx,sy,70,0,TAU); ctx.fill();
         ctx.fillStyle='#fffde7'; ctx.beginPath(); ctx.arc(sx,sy,26,0,TAU); ctx.fill();
-        [[.09,.07,90,28],[.33,.11,110,32],[.63,.06,75,24],[.88,.13,65,20]].forEach(([px,py,cw,ch])=>{
-          const cx2=W*px, cy2=H*py; ctx.fillStyle='rgba(255,255,255,.88)';
+        
+        // Expanded Cloud Array:
+        // [x_percent_of_skyWidth, y_percent_of_H, width, height]
+        // Ranging from 0.05 to 0.95 spreads them 360 degrees.
+        // Negative Y values push the clouds much higher into the sky.
+        [
+          [.05,  .07,  90,  28],
+          [.15, -.15,  110, 32], // Higher up
+          [.25,  .11,  110, 32],
+          [.35, -.05,  85,  25], // Mid-high
+          [.45,  .06,  75,  24],
+          [.55, -.25,  120, 40], // Directly overhead
+          [.65,  .02,  80,  25],
+          [.75, -.10,  95,  30],
+          [.85,  .13,  65,  20],
+          [.95, -.20,  100, 35]  // High up
+        ].forEach(([px,py,cw,ch])=>{
+          // Calculate positions relative to the full panorama width
+          const cx2=skyWidth*px, cy2=H*py; 
+          ctx.fillStyle='rgba(255,255,255,.88)';
+          
           [[0,0,cw*.5,ch*.52],[-cw*.27,ch*.1,cw*.34,ch*.42],[cw*.27,ch*.1,cw*.34,ch*.42],[0,ch*.14,cw*.44,ch*.38]]
-            .forEach(([ox,oy,rx,ry])=>{ ctx.beginPath(); ctx.ellipse(cx2+ox,cy2+oy,rx,ry,0,0,TAU); ctx.fill(); });
+            .forEach(([ox,oy,rx,ry])=>{ 
+              ctx.beginPath(); ctx.ellipse(cx2+ox,cy2+oy,rx,ry,0,0,TAU); ctx.fill(); 
+            });
         });
         ctx.restore();
       };
-      ctx.save(); ctx.translate(panX % W, 0); drawElements(); ctx.restore();
-      ctx.save(); ctx.translate((panX % W) + W, 0); drawElements(); ctx.restore();
-      ctx.save(); ctx.translate((panX % W) - W, 0); drawElements(); ctx.restore();
+      
+      // Draw the skybox 3 times to handle seamless looping when turning
+      ctx.save(); ctx.translate(panX % skyWidth, 0); drawElements(); ctx.restore();
+      ctx.save(); ctx.translate((panX % skyWidth) + skyWidth, 0); drawElements(); ctx.restore();
+      ctx.save(); ctx.translate((panX % skyWidth) - skyWidth, 0); drawElements(); ctx.restore();
+      
     } else {
-      // Living Room Walls (Simpsons Pink)
-      const g = ctx.createLinearGradient(0,0,0, drawHy);
-      g.addColorStop(0,'#e27289'); // Darker pink at ceiling
-      g.addColorStop(1,'#f3b49f'); // Light pink/orange wall
-      ctx.fillStyle=g; ctx.fillRect(0,0,W,drawHy);
+      const skyType = currentLevel.skyType || 'sunset';
+      const skyWidth = W * 2;
+      const panX = -(player.yaw / TAU) * skyWidth;
+      const pitchOffset = hy - (H * HORIZON);
+
+      // Helper to draw a panorama 3x for seamless turning
+      const renderPanorama = (drawElements) => {
+        ctx.save(); ctx.translate(panX % skyWidth, 0); drawElements(); ctx.restore();
+        ctx.save(); ctx.translate((panX % skyWidth) + skyWidth, 0); drawElements(); ctx.restore();
+        ctx.save(); ctx.translate((panX % skyWidth) - skyWidth, 0); drawElements(); ctx.restore();
+      };
+
+      if (skyType === 'sunset') {
+        // Level 1: Pinkish Tinted Sunset Skybox
+        const g = ctx.createLinearGradient(0,0,0, drawHy);
+        g.addColorStop(0,'#4a148c');  // Deep purple top
+        g.addColorStop(.5,'#e27289'); // Simpsons pink mid
+        g.addColorStop(1,'#f3b49f');  // Peachy horizon
+        ctx.fillStyle=g; ctx.fillRect(0,0,W,drawHy);
+
+        renderPanorama(() => {
+          ctx.save(); ctx.translate(0, pitchOffset);
+          const sx=W*.5, sy=H*.15;
+          const sg=ctx.createRadialGradient(sx,sy,0,sx,sy,90);
+          sg.addColorStop(0,'#fffde7'); sg.addColorStop(.2,'#ffb74d');
+          sg.addColorStop(.6,'rgba(243,180,159,.6)'); sg.addColorStop(1,'rgba(243,180,159,0)');
+          ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(sx,sy,90,0,TAU); ctx.fill();
+          [
+            [.1, .05, 100, 30], [.3, -.1, 120, 35], [.5, .15, 80, 25],
+            [.7, -.05, 110, 32], [.9, .08, 90, 28]
+          ].forEach(([px,py,cw,ch])=>{
+            const cx2=skyWidth*px, cy2=H*py; 
+            ctx.fillStyle='rgba(255, 200, 220, 0.7)';
+            [[0,0,cw*.5,ch*.52],[-cw*.27,ch*.1,cw*.34,ch*.42],[cw*.27,ch*.1,cw*.34,ch*.42],[0,ch*.14,cw*.44,ch*.38]]
+              .forEach(([ox,oy,rx,ry])=>{ ctx.beginPath(); ctx.ellipse(cx2+ox,cy2+oy,rx,ry,0,0,TAU); ctx.fill(); });
+          });
+          ctx.restore();
+        });
+
+      } else if (skyType === 'day') {
+        // Level 2 - Kitchen: bright airy window daylight
+        const g = ctx.createLinearGradient(0,0,0, drawHy);
+        g.addColorStop(0,'#bfe6f5'); g.addColorStop(.6,'#e8f7ff'); g.addColorStop(1,'#fffef2');
+        ctx.fillStyle=g; ctx.fillRect(0,0,W,drawHy);
+
+        renderPanorama(() => {
+          ctx.save(); ctx.translate(0, pitchOffset);
+          const sx=W*.7, sy=H*.1;
+          const sg=ctx.createRadialGradient(sx,sy,0,sx,sy,80);
+          sg.addColorStop(0,'#fffff0'); sg.addColorStop(.3,'#fff9c4');
+          sg.addColorStop(.7,'rgba(255,249,196,.3)'); sg.addColorStop(1,'rgba(255,249,196,0)');
+          ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(sx,sy,80,0,TAU); ctx.fill();
+          [[.15,.05,90,26],[.4,-.08,100,28],[.65,.1,80,24],[.85,-.04,95,26]].forEach(([px,py,cw,ch])=>{
+            const cx2=skyWidth*px, cy2=H*py;
+            ctx.fillStyle='rgba(255,255,255,.85)';
+            [[0,0,cw*.5,ch*.52],[-cw*.27,ch*.1,cw*.34,ch*.42],[cw*.27,ch*.1,cw*.34,ch*.42],[0,ch*.14,cw*.44,ch*.38]]
+              .forEach(([ox,oy,rx,ry])=>{ ctx.beginPath(); ctx.ellipse(cx2+ox,cy2+oy,rx,ry,0,0,TAU); ctx.fill(); });
+          });
+          ctx.restore();
+        });
+
+      } else if (skyType === 'void') {
+        // Level 3 - Basement: no windows, just dim unlit space above the walls
+        const g = ctx.createLinearGradient(0,0,0, drawHy);
+        g.addColorStop(0,'#1c1f22'); g.addColorStop(1,'#33363a');
+        ctx.fillStyle=g; ctx.fillRect(0,0,W,drawHy);
+
+      } else if (skyType === 'night') {
+        // Level 4 - Bedroom: night window with moon and stars
+        const g = ctx.createLinearGradient(0,0,0, drawHy);
+        g.addColorStop(0,'#0a0a2e'); g.addColorStop(.6,'#1a1a4e'); g.addColorStop(1,'#2d2d6e');
+        ctx.fillStyle=g; ctx.fillRect(0,0,W,drawHy);
+
+        renderPanorama(() => {
+          ctx.save(); ctx.translate(0, pitchOffset);
+          for(let i=0;i<40;i++){
+            ctx.save(); ctx.globalAlpha=.4+Math.sin(menuTime*.03+i)*.3;
+            ctx.fillStyle='#fff';
+            ctx.beginPath(); ctx.arc((i*173)%skyWidth,(i*57)%(H*.45),1+((i%3)*.6),0,TAU); ctx.fill();
+            ctx.restore();
+          }
+          const sx=W*.6, sy=H*.12;
+          const sg=ctx.createRadialGradient(sx,sy,0,sx,sy,55);
+          sg.addColorStop(0,'#fdfdf5'); sg.addColorStop(.5,'#e8e8d0'); sg.addColorStop(1,'rgba(232,232,208,0)');
+          ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(sx,sy,55,0,TAU); ctx.fill();
+          ctx.fillStyle='#f5f5e8'; ctx.beginPath(); ctx.arc(sx,sy,22,0,TAU); ctx.fill();
+          ctx.restore();
+        });
+
+      } else if (skyType === 'outdoor') {
+        // Level 5 - Backyard: open blue daytime sky
+        const g = ctx.createLinearGradient(0,0,0, drawHy);
+        g.addColorStop(0,'#1976d2'); g.addColorStop(.6,'#4fc3f7'); g.addColorStop(1,'#bbdefb');
+        ctx.fillStyle=g; ctx.fillRect(0,0,W,drawHy);
+
+        renderPanorama(() => {
+          ctx.save(); ctx.translate(0, pitchOffset);
+          const sx=W*.8, sy=H*.08;
+          const sg=ctx.createRadialGradient(sx,sy,0,sx,sy,75);
+          sg.addColorStop(0,'#fffde7'); sg.addColorStop(.3,'#fff176');
+          sg.addColorStop(.7,'rgba(255,235,59,.3)'); sg.addColorStop(1,'rgba(255,255,59,0)');
+          ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(sx,sy,75,0,TAU); ctx.fill();
+          ctx.fillStyle='#fffde7'; ctx.beginPath(); ctx.arc(sx,sy,28,0,TAU); ctx.fill();
+          [[.1,.06,100,30],[.3,-.1,120,34],[.5,.12,85,26],[.7,-.06,110,30],[.9,.09,90,27]].forEach(([px,py,cw,ch])=>{
+            const cx2=skyWidth*px, cy2=H*py;
+            ctx.fillStyle='rgba(255,255,255,.9)';
+            [[0,0,cw*.5,ch*.52],[-cw*.27,ch*.1,cw*.34,ch*.42],[cw*.27,ch*.1,cw*.34,ch*.42],[0,ch*.14,cw*.44,ch*.38]]
+              .forEach(([ox,oy,rx,ry])=>{ ctx.beginPath(); ctx.ellipse(cx2+ox,cy2+oy,rx,ry,0,0,TAU); ctx.fill(); });
+          });
+          ctx.restore();
+        });
+      }
     }
   }
 }
@@ -403,53 +783,22 @@ function drawGround(){
     ig.addColorStop(0,'#d4b46a'); ig.addColorStop(1,'#e8c97a');
     ctx.fillStyle=ig; ctx.fillRect(0, sandY, W, H - sandY);
   } else {
-    // Hardwood Floor
+    // Themed Floor (hardwood / tile / concrete / carpet / grass depending on level)
     const fg=ctx.createLinearGradient(0, startY, 0, H);
-    fg.addColorStop(0,'#8d5524'); // Darker back
-    fg.addColorStop(1,'#c68642'); // Lighter front
+    fg.addColorStop(0, currentLevel.floorTop || '#8d5524');
+    fg.addColorStop(1, currentLevel.floorBottom || '#c68642');
     ctx.fillStyle=fg; ctx.fillRect(0, startY, W, H - startY);
     
-    // Green Rug Wash
+    // Themed Wash (rug / grime / carpet plush / dirt patch depending on level)
     const rugY = Math.max(0, hy+30);
     const rugG = ctx.createLinearGradient(0, rugY, 0, H);
-    rugG.addColorStop(0,'rgba(76, 175, 80, 0.2)');
-    rugG.addColorStop(1,'rgba(76, 175, 80, 0.7)');
+    rugG.addColorStop(0, currentLevel.washTop || 'rgba(76, 175, 80, 0.2)');
+    rugG.addColorStop(1, currentLevel.washBottom || 'rgba(76, 175, 80, 0.7)');
     ctx.fillStyle = rugG;
     ctx.fillRect(0, rugY, W, H - rugY);
   }
 }
 
-function drawRoomProps() {
-  if (currentLevel.shape !== 'square') return;
-  
-  // Sort from back to front
-  [...roomProps].sort((a,b) => Math.hypot(b.wx-player.x, b.wz-player.z) - Math.hypot(a.wx-player.x, a.wz-player.z)).forEach(prop => {
-    if (prop.type === 'baseboard') {
-      const p = project(prop.wx, prop.wz, 0);
-      if (!p || p.cz > 800) return;
-      const sc = clamp(p.scale / 2, 0.1, 10);
-      ctx.fillStyle = '#6d4c41'; ctx.fillRect(p.sx - 15*sc, p.sy - 8*sc, 30*sc, 10*sc);
-      ctx.fillStyle = '#8d6e63'; ctx.fillRect(p.sx - 15*sc, p.sy - 12*sc, 30*sc, 4*sc);
-    } else if (prop.type === 'painting') {
-      const p = project(prop.wx, prop.wz, 40); // 40 units up the wall
-      if (!p || p.cz > 800) return;
-      const sc = clamp(p.scale / 2, 0.1, 15);
-      ctx.fillStyle = '#ffca28'; ctx.fillRect(p.sx - 30*sc, p.sy - 20*sc, 60*sc, 40*sc); // Frame
-      ctx.fillStyle = '#29b6f6'; ctx.fillRect(p.sx - 25*sc, p.sy - 15*sc, 50*sc, 30*sc); // Sky
-      ctx.fillStyle = '#fff'; // Sailboat
-      ctx.beginPath(); ctx.moveTo(p.sx, p.sy - 10*sc); ctx.lineTo(p.sx + 15*sc, p.sy + 10*sc); ctx.lineTo(p.sx - 5*sc, p.sy + 10*sc); ctx.fill();
-    } else if (prop.type === 'tv') {
-      const p = project(prop.wx, prop.wz, 10);
-      if (!p || p.cz > 800) return;
-      const sc = clamp(p.scale / 2, 0.1, 15);
-      ctx.fillStyle = '#5d4037'; ctx.fillRect(p.sx - 25*sc, p.sy, 50*sc, 20*sc); // Stand
-      ctx.fillStyle = '#673ab7'; ctx.fillRect(p.sx - 30*sc, p.sy - 40*sc, 60*sc, 40*sc); // Purple Box
-      ctx.fillStyle = '#000'; ctx.fillRect(p.sx - 25*sc, p.sy - 35*sc, 45*sc, 30*sc); // Screen
-      ctx.strokeStyle = '#999'; ctx.lineWidth = 2*sc; // Antenna
-      ctx.beginPath(); ctx.moveTo(p.sx+10*sc, p.sy-40*sc); ctx.lineTo(p.sx+25*sc, p.sy-55*sc); ctx.stroke();
-    }
-  });
-}
 
 function drawShoreBoundary() {
   if (currentLevel.shape !== 'circle') return;
@@ -479,7 +828,13 @@ function drawGroundDetails() {
     ctx.restore();
   });
 }
-
+function drawCeiling() {
+  if (currentLevel.shape !== 'square') return;
+  if (currentLevel.hasCeiling === false) return; // open-air levels (e.g. the Backyard) have no ceiling
+  const hw = currentLevel.width / 2;
+  const hd = currentLevel.depth / 2;
+  drawClippedHorizontalPoly(0, 0, hw, hd, currentLevel.wallHeight || 140, currentLevel.ceilColor || '#e27289');
+}
 function drawPalmTree(tree){
   if (currentLevel.shape !== 'circle') return;
   const p=project(tree.wx, tree.wz);
@@ -511,6 +866,27 @@ function drawPalmTree(tree){
     }
   }
   ctx.restore();
+/*
+// --- DEBUG HITBOXES ---
+  ctx.lineWidth = 2;
+  
+  // 1. The Tapered Trunk Hitbox (Trapezoid)
+  const trunkTop = th * 0.65; 
+  ctx.strokeStyle = 'rgba(255, 0, 0, 0.6)'; // Red
+  ctx.beginPath();
+  ctx.moveTo(bx - 14 * sc, by);              // Bottom Left (Tight)
+  ctx.lineTo(bx - 28 * sc, by - trunkTop);   // Top Left (Wide)
+  ctx.lineTo(bx + 28 * sc, by - trunkTop);   // Top Right (Wide)
+  ctx.lineTo(bx + 14 * sc, by);              // Bottom Right (Tight)
+  ctx.closePath();
+  ctx.stroke();
+
+  // 2. The Canopy Hitbox
+  const canopyTopY = by - th - 90 * sc; 
+  const canopyHeight = (th - trunkTop) + 90 * sc; 
+  ctx.strokeStyle = 'rgba(0, 255, 0, 0.6)'; // Green
+  ctx.strokeRect(bx - 55 * sc, canopyTopY, 110 * sc, canopyHeight);
+*/
 }
 
 // ── player movement ──────────────────────────────────────────────
@@ -532,7 +908,20 @@ function updatePlayer(){
     // Only apply the movement if the path is clear (this allows sliding against edges)
     player.x += (mx*cos + mz*sin) * player.speed;
     player.z += (-mx*sin + mz*cos) * player.speed;
-
+    //Slide around palm trees
+    if (currentLevel.shape === 'circle') {
+      for(let t of palmTrees) {
+        const dx = player.x - t.wx, dz = player.z - t.wz;
+        const dist = Math.hypot(dx, dz);
+        const minDist = player.radius + 12; // 12 represents the trunk radius
+        
+        if (dist < minDist && dist > 0) {
+          const overlap = minDist - dist;
+          player.x += (dx / dist) * overlap; 
+          player.z += (dz / dist) * overlap; 
+        }
+      }
+    }
     // Slide around enemies
     for(let e of enemies) {
       const dx = player.x - e.x, dz = player.z - e.z;
@@ -558,13 +947,13 @@ function updatePlayer(){
   }
   
   // Keyboard camera controls
-  if(keys['ArrowLeft'])  player.yaw -= 0.035;
-  if(keys['ArrowRight']) player.yaw += 0.035;
-  if(keys['ArrowUp'])    player.pitch -= 0.025;
-  if(keys['ArrowDown'])  player.pitch += 0.025;
+  if(keys['ArrowLeft'])  player.yaw -= 0.035 * mouseSensitivity;
+  if(keys['ArrowRight']) player.yaw += 0.035 * mouseSensitivity;
+  if(keys['ArrowUp'])    player.pitch -= 0.07 * mouseSensitivity;
+  if(keys['ArrowDown'])  player.pitch += 0.07 * mouseSensitivity;
   
   // Clamp pitch so the player can't flip their neck backwards
-  player.pitch = clamp(player.pitch, -1.5, 1.5);
+  player.pitch = clamp(player.pitch, -2.8, 2.8);
 }
 
 // ── gun (first-person view) ──────────────────────────────────────
@@ -579,29 +968,31 @@ function drawGun(){
   ctx.strokeStyle='#111'; ctx.lineWidth=3; ctx.lineCap='round'; ctx.beginPath(); ctx.arc(2,22,11,.1,Math.PI-.1); ctx.stroke();
   ctx.strokeStyle='#888'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(2,14); ctx.lineTo(4,24); ctx.stroke();
   if(activePowerup){
-    const gc=activePowerup==='rapidfire'?'#00e5ff':'#ff9800';
+    const gc=POWERUP_COLOR[activePowerup] || '#ff9800';
     ctx.shadowColor=gc; ctx.shadowBlur=22; ctx.strokeStyle=gc; ctx.lineWidth=2.5; rrStroke(-7,-92,14,105,4); ctx.shadowBlur=0;
   }
   ctx.restore();
 }
 function drawCrosshair(){
-  const cx2=W/2, cy2=H/2, sz=18, gap=6;
+  const cx2=W/2, cy2=H * HORIZON, sz=18, gap=6;
   ctx.save(); ctx.strokeStyle='rgba(255,255,255,.92)'; ctx.lineWidth=2; ctx.shadowColor='#000'; ctx.shadowBlur=5;
   ctx.beginPath(); ctx.moveTo(cx2-sz,cy2); ctx.lineTo(cx2-gap,cy2); ctx.moveTo(cx2+gap,cy2); ctx.lineTo(cx2+sz,cy2);
   ctx.moveTo(cx2,cy2-sz); ctx.lineTo(cx2,cy2-gap); ctx.moveTo(cx2,cy2+gap); ctx.lineTo(cx2,cy2+sz); ctx.stroke();
-  const cc=activePowerup==='rapidfire'?'#00e5ff':activePowerup==='heavyshot'?'#ff9800':'#ab47bc';
+  const cc=POWERUP_COLOR[activePowerup] || '#ab47bc';
   ctx.fillStyle=cc; ctx.shadowColor=cc; ctx.shadowBlur=10; ctx.beginPath(); ctx.arc(cx2,cy2,3.5,0,TAU); ctx.fill(); ctx.restore();
 }
 
 // ── bullets ──────────────────────────────────────────────────────
 function spawnBullet(){
   const speed=22;
-  const cosP = Math.cos(player.pitch);
+  const vx = Math.sin(player.yaw) * speed;
+  const vz = Math.cos(player.yaw) * speed;
+  const vy = -player.pitch * speed; 
   bullets.push({
     x: player.x, y: CAMERA_HEIGHT - 5, z: player.z,
-    vx: Math.sin(player.yaw) * cosP * speed,
-    vy: -Math.sin(player.pitch) * speed,
-    vz: Math.cos(player.yaw) * cosP * speed,
+    vx: vx,
+    vy: vy,
+    vz: vz,
     life: 90, damage: gunDamage, trail: []
   });
   for(let i=0;i<8;i++){
@@ -617,7 +1008,7 @@ function updateBullets(){
     b.x += b.vx; b.y += b.vy; b.z += b.vz; 
 
     if (b.y <= 0) {
-      const floorColor = (currentLevel.shape === 'circle') ? '#d4b46a' : '#c68642';
+      const floorColor = (currentLevel.shape === 'circle') ? '#d4b46a' : (currentLevel.floorBottom || '#c68642');
       for(let p=0; p<6; p++){
         const a = Math.random() * TAU, s = 1 + Math.random() * 2;
         particles.push({ x: b.x, z: b.z, vx: Math.cos(a)*s, vz: Math.sin(a)*s, vy_acc: 0, vy_init: -2 - Math.random()*2, life: 15, maxLife: 15, col: floorColor, r: 2 + Math.random()*3 });
@@ -632,24 +1023,35 @@ function updateBullets(){
         if (Math.abs(b.x) > 60 && Math.abs(b.z) > 60) { // Don't block bullets going through doors!
           for(let p=0; p<8; p++){
             const a = Math.random() * TAU, s = 1 + Math.random() * 3;
-            particles.push({ x: b.x, z: b.z, vx: Math.cos(a)*s, vz: Math.sin(a)*s, vy_acc: 0, vy_init: -1 - Math.random()*3, life: 18, maxLife: 18, col: Math.random() > 0.5 ? '#f3b49f' : '#fff', r: 2 + Math.random()*4 });
+            particles.push({ x: b.x, y: b.y, z: b.z, vx: Math.cos(a)*s, vz: Math.sin(a)*s, vy_acc: 0, vy_init: -1 - Math.random()*3, life: 18, maxLife: 18, col: Math.random() > 0.5 ? '#f3b49f' : '#fff', r: 2 + Math.random()*4 });
           }
           bullets.splice(i, 1); continue; 
         }
       }
-    } else {
+} else {
         for (let t of palmTrees) {
-          if (Math.hypot(b.x - t.wx, b.z - t.wz) < 14 && b.y < 110 && b.y > -10) {
+          let hitRadius;
+          if (b.y > t.height * 0.7) {
+            // 1. WE ARE IN THE LEAVES: Reduced canopy hitbox width
+            hitRadius = 35; 
+          } else {
+            // 2. TRUNK: Narrow uniform radius matching the player collision
+            hitRadius = 12; 
+          }
+          // Increased vertical limit to t.height + 120 to hit the top leaves
+          if (Math.hypot(b.x - t.wx, b.z - t.wz) < hitRadius && b.y < t.height + 120 && b.y > -10) {
+          
+          if (Math.hypot(b.x - t.wx, b.z - t.wz) < hitRadius && b.y < t.height + 90 && b.y > -10) {
             for(let p=0; p<8; p++){
               const a = Math.random() * TAU, s = 1 + Math.random() * 3;
-              particles.push({ x: b.x, z: b.z, vx: Math.cos(a)*s, vz: Math.sin(a)*s, vy_acc: 0, vy_init: -2 - Math.random()*3, life: 20, maxLife: 20, col: Math.random() > 0.3 ? '#7a5c10' : '#4caf50', r: 2 + Math.random()*4 });
+              particles.push({ x: b.x, y: b.y, z: b.z, vx: Math.cos(a)*s, vz: Math.sin(a)*s, vy_acc: 0, vy_init: -2 - Math.random()*3, life: 20, maxLife: 20, col: Math.random() > 0.3 ? '#7a5c10' : '#4caf50', r: 2 + Math.random()*4 });
             }
             bullets.splice(i, 1); break;
           }
         }
-    }
-    b.life--; if(b.life<=0) bullets.splice(i,1);
+    }    b.life--; if(b.life<=0) bullets.splice(i,1);
   }
+}
 }
 function drawBullets(){
   bullets.forEach(b=>{
@@ -682,16 +1084,92 @@ function spawnEnemy(){
       const d = doors[Math.floor(Math.random() * doors.length)];
       ex = d.x; ez = d.z;
   }
-  enemies.push({x:ex, z:ez, ...type, hp:type.hp, maxHp:type.hp, spd:type.spd+(wave-1)*.04, flash:0, bob:Math.random()*TAU, attackTimer:0});
+  enemies.push({x:ex, z:ez, ...type, hp:type.hp, maxHp:type.hp, spd:type.spd+(wave + currentLevel.difficultyOffset -1)*.04, flash:0, bob:Math.random()*TAU, attackTimer:0, frozen:0, burning:0, burnTickTimer:0});
 }
 function updateEnemies(){
   for(let i=enemies.length-1;i>=0;i--){
     const e=enemies[i];
-    const dx=player.x-e.x, dz=player.z-e.z;
-    const dist=Math.sqrt(dx*dx+dz*dz)||1;
-    const stopDist = player.radius + e.bw * 0.45;
-    if (dist > stopDist) { e.x += (dx/dist)*e.spd; e.z += (dz/dist)*e.spd; }
+    
+    let tx = player.x, tz = player.z;
+    
+    // Level 1: Wall Collision & Doorway Pathfinding
+    if (currentLevel.shape === 'square') {
+      const hw = currentLevel.width / 2, hd = currentLevel.depth / 2, er = e.bw * 0.45;
+      // If outside the inner room boundary, force them to walk to the center (0,0)
+      if (Math.abs(e.x) > hw - er - 5 || Math.abs(e.z) > hd - er - 5) { 
+        tx = 0; 
+        tz = 0; 
+      }
+    }
+
+    const dx = tx - e.x, dz = tz - e.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    
+    // Only stop moving if they are actively targeting the player
+    const stopDist = (tx === player.x) ? (player.radius + e.bw * 0.45) : 0;
+    
+    if (dist > stopDist) { const slowMult = e.frozen > 0 ? 0.35 : 1; e.x += (dx/dist)*e.spd*slowMult; e.z += (dz/dist)*e.spd*slowMult; }
+    
+    // 3. TREE COLLISION (Slide around trunks)
+    if (currentLevel.shape === 'circle') {
+      for (let t of palmTrees) {
+        const tdx = e.x - t.wx;
+        const tdz = e.z - t.wz;
+        const tDist = Math.hypot(tdx, tdz);
+        const tMinDist = e.bw * 0.45 + 12; // Enemy radius + Tree trunk radius (12)
+
+        if (tDist < tMinDist && tDist > 0) {
+          const overlap = tMinDist - tDist;
+          e.x += (tdx / tDist) * overlap; // Push out along X
+          e.z += (tdz / tDist) * overlap; // Push out along Z
+
+          //enemies slip through trees when stuck
+          e.x += (-tdz / tDist) * 1.5; 
+          e.z += (tdx / tDist) * 1.5;
+        }
+      }
+    }
+
+    // 4. ENEMY-TO-ENEMY COLLISION (Prevent merging)
+    for(let j=0; j<enemies.length; j++){
+      if(i === j) continue; // Don't collide with self
+      const other = enemies[j];
+      const edx = e.x - other.x;
+      const edz = e.z - other.z;
+      const eDist = Math.hypot(edx, edz);
+      const eMinDist = (e.bw * 0.45) + (other.bw * 0.45);
+
+      if (eDist < eMinDist && eDist > 0) {
+        const overlap = eMinDist - eDist;
+        // Push this enemy away from the other enemy by half the overlap 
+        // (the other enemy will push itself away on its own loop iteration)
+        e.x += (edx / eDist) * (overlap * 0.5); 
+        e.z += (edz / eDist) * (overlap * 0.5); 
+      }
+    }
+    
     if(e.flash>0) e.flash--;
+    if(e.frozen>0) e.frozen--;
+    if(e.burning>0){
+      e.burning--;
+      // gentle continuous flame flicker particles, purely visual
+      if(gameTime % 6 === 0){
+        particles.push({x:e.x,z:e.z, vx:(Math.random()-.5)*0.8, vz:(Math.random()-.5)*0.8, vy_acc:0, vy_init:-1.5-Math.random()*1.5, life:18, maxLife:18, col: Math.random()>0.4?'#ff7043':'#ffca28', r:2+Math.random()*2.5});
+      }
+      e.burnTickTimer--;
+      if(e.burnTickTimer<=0){
+        e.burnTickTimer = 30; // one damage tick roughly every half second
+        e.hp -= 1; e.flash = 6;
+        for(let p2=0;p2<6;p2++){ particles.push({x:e.x,z:e.z, vx:(Math.random()-.5)*2, vz:(Math.random()-.5)*2, vy_acc:0, vy_init:-2-Math.random()*3, life:22, maxLife:22, col:'#ff5722', r:3+Math.random()*3}); }
+        if(e.hp<=0){
+          for(let p2=0;p2<26;p2++){ particles.push({x:e.x,z:e.z,vx:Math.cos(Math.random()*TAU)*(3+Math.random()*5),vz:Math.sin(Math.random()*TAU)*(3+Math.random()*5), vy_acc:0,vy_init:-5-Math.random()*4,life:42,maxLife:42,col:e.col,r:6+Math.random()*8}); }
+          score+=e.pts; kills++; if(score>=nextPowerupScore){ nextPowerupScore+=1500; spawnPowerup(); }
+          scoreFloats.push({x:e.x,z:e.z,text:'+'+e.pts,col:'#ffeb3b',life:70,maxLife:70,rise:0});
+          enemies.splice(i,1);
+          continue; // this enemy is gone, skip the rest of its processing this frame
+        }
+      }
+    }
     if(dist <= stopDist + 15){
       e.attackTimer++;
       if(e.attackTimer > 45){ e.attackTimer=0; playerHit(); e.x -= (dx/dist)*25; e.z -= (dz/dist)*25; }
@@ -699,8 +1177,13 @@ function updateEnemies(){
     let dead=false;
     for(let j=bullets.length-1;j>=0;j--){
       const b=bullets[j];
-      if(Math.hypot(b.x-e.x,b.z-e.z)<e.bw*.45 && b.y < 100 && b.y > -20){
+      if(Math.hypot(b.x-e.x,b.z-e.z)<e.bw*.45 && b.y < e.bh +5 && b.y > -10){
         e.hp-=b.damage; e.flash=8; bullets.splice(j,1);
+        if(activePowerup === 'freeze'){ e.frozen = 240; }
+        if(activePowerup === 'fire'){
+          if(e.burning <= 0){ e.burning = 180; e.burnTickTimer = 30; } // ignite fresh, start ticking
+          else { e.burning = 180; } // refresh duration only - don't add a second stacking tick
+        }
         for(let p2=0;p2<12;p2++){ particles.push({x:e.x,z:e.z,vx:Math.cos(Math.random()*TAU)*(2+Math.random()*4),vz:Math.sin(Math.random()*TAU)*(2+Math.random()*4), vy_acc:0,vy_init:-3-Math.random()*3,life:22,maxLife:22,col:e.col,r:4+Math.random()*4}); }
         if(e.hp<=0){
           for(let p2=0;p2<26;p2++){ particles.push({x:e.x,z:e.z,vx:Math.cos(Math.random()*TAU)*(3+Math.random()*5),vz:Math.sin(Math.random()*TAU)*(3+Math.random()*5), vy_acc:0,vy_init:-5-Math.random()*4,life:42,maxLife:42,col:e.col,r:6+Math.random()*8}); }
@@ -711,22 +1194,6 @@ function updateEnemies(){
       }
     } if(dead) continue;
   }
-}
-function drawEnemies(){
-  [...enemies].sort((a,b)=>Math.hypot(b.x-player.x,b.z-player.z)-Math.hypot(a.x-player.x,a.z-player.z)).forEach(e=>{
-    const p=project(e.x,e.z); if(!p||p.cz>650) return;
-    let lungeScale = 1;
-    if (e.attackTimer > 30) lungeScale = 1 + (e.attackTimer - 30) * 0.015;
-    const sc=clamp(p.scale/2, 0.2, 25) * lungeScale;
-    const w=e.bw*sc, h=e.bh*sc, sx=p.sx, sy=p.sy;
-    ctx.save(); ctx.fillStyle='rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(sx,sy,w*.55,Math.max(4,8*sc),0,0,TAU); ctx.fill(); ctx.restore();
-    ctx.save(); ctx.translate(sx, sy); ctx.scale(sc,sc); e.draw(e.bw,e.bh,e.col,e.acc,e.flash>0); ctx.restore();
-    if(e.hp<e.maxHp){
-      const bw=w*1.1,bh=Math.max(3,7*sc),bx=sx-bw/2,by=sy-h*.7-bh-4;
-      ctx.fillStyle='#222'; rrFill(bx,by,bw,bh,2);
-      const pct=e.hp/e.maxHp; ctx.fillStyle=pct>.5?'#4caf50':pct>.25?'#ff9800':'#f44336'; rrFill(bx,by,bw*pct,bh,2);
-    }
-  });
 }
 
 // ── power-ups ────────────────────────────────────────────────────
@@ -741,7 +1208,8 @@ function spawnPowerup() {
     px = clamp(px, -currentLevel.width/2 + 30, currentLevel.width/2 - 30);
     pz = clamp(pz, -currentLevel.depth/2 + 30, currentLevel.depth/2 - 30);
   }
-  const r = Math.random(), type = r < 0.33 ? 'rapidfire' : (r < 0.66 ? 'heavyshot' : 'health');
+  const r = Math.random();
+  const type = r < 0.2 ? 'rapidfire' : r < 0.4 ? 'heavyshot' : r < 0.6 ? 'freeze' : r < 0.8 ? 'fire' : 'health';
   powerups.push({ x: px, z: pz, type: type, bob: Math.random() * TAU, pulse: 0 });
 }
 function updatePowerups(){
@@ -751,23 +1219,417 @@ function updatePowerups(){
   }
 }
 function collectPowerup(type, wx, wz) {
-  const c = type === 'rapidfire' ? '#00e5ff' : (type === 'heavyshot' ? '#ff9800' : '#e53935');
+  const c = POWERUP_COLOR[type] || '#e53935';
   if (type === 'health') lives = 3; else { activePowerup = type; powerupTimer = POWERUP_DURATION; gunFireRate = type === 'rapidfire' ? 5 : 18; gunDamage = type === 'heavyshot' ? 2 : 1; }
   for (let i = 0; i < 22; i++) {
     particles.push({ x: wx, z: wz, vx: Math.cos(Math.random() * TAU) * (3 + Math.random() * 5), vz: Math.sin(Math.random() * TAU) * (3 + Math.random() * 5), vy_acc: 0, vy_init: -6 - Math.random() * 4, life: 40, maxLife: 40, col: c, r: 5 + Math.random() * 6 });
   }
 }
 function resetPowerup(){ activePowerup=null; gunFireRate=18; gunDamage=1; }
-function drawPowerups() {
-  powerups.forEach(p => {
-    const pr = project(p.x, p.z); if (!pr || pr.cz > 450) return;
-    const sc = clamp(pr.scale / 2, 0.2, 15), bob = Math.sin(gameTime * .055 + p.bob) * 7 * sc, sx = pr.sx, sy = pr.sy - 32 * sc + bob, sz = 26 * sc;
-    const color = p.type === 'rapidfire' ? '#00e5ff' : (p.type === 'heavyshot' ? '#ff9800' : '#e53935'), icon = p.type === 'rapidfire' ? '⚡' : (p.type === 'heavyshot' ? '💥' : '❤'), label = p.type === 'rapidfire' ? 'RAPID' : (p.type === 'heavyshot' ? 'HEAVY' : 'HEALTH');
-    ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.beginPath(); ctx.ellipse(sx, pr.sy, sz * .9, sz * .22, 0, 0, TAU); ctx.fill();
-    ctx.shadowColor = color; ctx.shadowBlur = 20 * sc; ctx.strokeStyle = color; ctx.lineWidth = 2 * sc; ctx.globalAlpha = .45 + Math.sin(gameTime * .09) * .35; ctx.beginPath(); ctx.arc(sx, sy, (sz + 6) * (.82 + Math.sin(gameTime * .09) * .18), 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
-    ctx.fillStyle = 'rgba(5,5,20,.85)'; rrFill(sx - sz, sy - sz, sz * 2, sz * 2, sz * .25); ctx.strokeStyle = color; ctx.lineWidth = 2 * sc; rrStroke(sx - sz, sy - sz, sz * 2, sz * 2, sz * .25);
-    ctx.shadowBlur = 12 * sc; ctx.font = Math.round(sz * 1.1) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = color; ctx.fillText(icon, sx, sy + sz * .06);
-    ctx.font = 'bold ' + Math.max(9, Math.round(11 * sc)) + 'px "Courier New",monospace'; ctx.fillStyle = '#fff'; ctx.shadowBlur = 0; ctx.textBaseline = 'alphabetic'; ctx.fillText(label, sx, sy + sz + 12 * sc); ctx.restore();
+// Transform world coordinates relative to where the player is looking
+function transformToCameraSpace(wx, wz) {
+  const dx = wx - player.x;
+  const dz = wz - player.z;
+  const cosYaw = Math.cos(player.yaw);
+  const sinYaw = Math.sin(player.yaw);
+  const x = dx * cosYaw - dz * sinYaw;
+  const z = dx * sinYaw + dz * cosYaw;
+  return { x, z };
+}
+
+// Renders a true 3D wall polygon from point A to point B
+// Notice the 'bottomY = 0' added to the end of this line!
+function drawWallPanel(wx1, wz1, wx2, wz2, height, color, bottomY = 0) {
+  let p1 = transformToCameraSpace(wx1, wz1);
+  let p2 = transformToCameraSpace(wx2, wz2);
+
+  // Near plane clipping: discard if entirely behind the camera
+  if (p1.z < 1 && p2.z < 1) return; 
+  
+  // Clip partially hidden walls against the z=1 plane
+  if (p1.z < 1) {
+    let t = (1 - p1.z) / (p2.z - p1.z);
+    p1.x = p1.x + t * (p2.x - p1.x);
+    p1.z = 1;
+  } else if (p2.z < 1) {
+    let t = (1 - p2.z) / (p1.z - p2.z);
+    p2.x = p2.x + t * (p1.x - p2.x);
+    p2.z = 1;
+  }
+
+  const fovFactor = W / (2 * Math.tan(FOV_HALF));
+  const cy = H * HORIZON - (player.pitch * fovFactor);
+  
+  // Project the floor and ceiling onto the screen
+  // (Using MINUS signs here, not slashes!)
+  const sy1_b = cy + (CAMERA_HEIGHT - bottomY) / p1.z * fovFactor;
+  const sy1_t = cy + (CAMERA_HEIGHT - height) / p1.z * fovFactor;
+  const sy2_b = cy + (CAMERA_HEIGHT - bottomY) / p2.z * fovFactor;
+  const sy2_t = cy + (CAMERA_HEIGHT - height) / p2.z * fovFactor;
+
+  const sx1 = W/2 + p1.x / p1.z * fovFactor;
+  const sx2 = W/2 + p2.x / p2.z * fovFactor;
+
+  // Draw the wall polygon
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(sx1, sy1_t);
+  ctx.lineTo(sx2, sy2_t);
+  ctx.lineTo(sx2, sy2_b);
+  ctx.lineTo(sx1, sy1_b);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Optional: faint line between panels for depth perception
+  ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+// Draws horizontal planes (like the top of the TV)
+function drawHorizontalPoly(points, y, color) {
+  const proj = [];
+  for(let pt of points) {
+    let p = transformToCameraSpace(pt.x, pt.z);
+    // Simple clip: if any corner is behind the camera, skip drawing the top
+    if(p.z < 1) return; 
+    const fovFactor = W / (2 * Math.tan(FOV_HALF));
+    const cy = H * HORIZON - (player.pitch * fovFactor);
+    proj.push({ sx: W/2 + p.x/p.z * fovFactor, sy: cy + (CAMERA_HEIGHT - y)/p.z * fovFactor });
+  }
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(proj[0].sx, proj[0].sy);
+  for(let i=1; i<proj.length; i++) ctx.lineTo(proj[i].sx, proj[i].sy);
+  ctx.closePath();
+  ctx.fill();
+}
+// Upgraded horizontal polygon renderer with near-plane Z-clipping
+function drawClippedHorizontalPoly(wx, wz, hw, hd, y, color) {
+  const corners = [
+    {x: wx - hw, z: wz - hd}, {x: wx + hw, z: wz - hd},
+    {x: wx + hw, z: wz + hd}, {x: wx - hw, z: wz + hd}
+  ];
+
+  // Transform to camera space
+  let camPoints = corners.map(pt => transformToCameraSpace(pt.x, pt.z));
+
+  // Clip the polygon against the camera lens (Z = 1)
+  let clipped = [];
+  for (let i = 0; i < camPoints.length; i++) {
+    let p1 = camPoints[i];
+    let p2 = camPoints[(i + 1) % camPoints.length];
+
+    if (p1.z >= 1) clipped.push(p1);
+
+    // If the line segment crosses the Z=1 plane, find the exact intersection
+    if ((p1.z >= 1 && p2.z < 1) || (p1.z < 1 && p2.z >= 1)) {
+      let t = (1 - p1.z) / (p2.z - p1.z);
+      clipped.push({ x: p1.x + t * (p2.x - p1.x), z: 1 });
+    }
+  }
+
+  // If there aren't enough points left to make a shape, stop
+  if (clipped.length < 3) return; 
+
+  const fovFactor = W / (2 * Math.tan(FOV_HALF));
+  const cy = H * HORIZON - (player.pitch * fovFactor);
+
+  // Draw the clipped ceiling
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  clipped.forEach((p, index) => {
+    const sx = W/2 + p.x / p.z * fovFactor;
+    const sy = cy + (CAMERA_HEIGHT - y) / p.z * fovFactor;
+    if (index === 0) ctx.moveTo(sx, sy);
+    else ctx.lineTo(sx, sy);
+  });
+  ctx.closePath();
+  ctx.fill();
+}
+// Assembles a 3D box out of panels and sorts them so they render correctly
+function draw3DBox(cx, cz, w, d, bottomY, topY, colors) {
+  const hw = w/2, hd = d/2;
+  const corners = [
+    {x: cx-hw, z: cz-hd}, {x: cx+hw, z: cz-hd},
+    {x: cx+hw, z: cz+hd}, {x: cx-hw, z: cz+hd}
+  ];
+
+  // Draw the top panel
+  drawHorizontalPoly(corners, topY, colors.top);
+
+  // Define the 4 side faces
+  const faces = [
+    { p1: corners[0], p2: corners[1], color: colors.front },
+    { p1: corners[1], p2: corners[2], color: colors.right },
+    { p1: corners[2], p2: corners[3], color: colors.back },
+    { p1: corners[3], p2: corners[0], color: colors.left }
+  ];
+
+  // Sort faces by distance to player (draw furthest walls first)
+  faces.forEach(f => {
+    f.dist = Math.hypot(((f.p1.x + f.p2.x)/2) - player.x, ((f.p1.z + f.p2.z)/2) - player.z);
+  });
+  faces.sort((a, b) => b.dist - a.dist);
+
+  faces.forEach(f => {
+    drawWallPanel(f.p1.x, f.p1.z, f.p2.x, f.p2.z, topY, f.color, bottomY);
+  });
+}
+
+// ── SINGLE OBJECT RENDERERS ──────────────────────────────────────
+function drawSingleProp(prop) {
+  if (prop.type === 'wall') {
+    const wallH = currentLevel.wallHeight || 140;
+    // 1. Draw the main wall (themed color/height per level)
+    drawWallPanel(prop.wx1, prop.wz1, prop.wx2, prop.wz2, wallH, currentLevel.wallColor || '#e27289');
+    // 2. Draw a 12-pixel high baseboard at the bottom
+    drawWallPanel(prop.wx1, prop.wz1, prop.wx2, prop.wz2, 12, currentLevel.wallBase || '#6d4c41');
+    
+  } else if (prop.type === 'painting') {
+    // Determine which way to push the painting off the wall so it doesn't clip
+    const zOffset = prop.wz < 0 ? 1 : -1; 
+    // 1. Draw the gold frame
+    drawWallPanel(prop.wx - 25, prop.wz + zOffset, prop.wx + 25, prop.wz + zOffset, 90, '#ffca28', 40);
+    // 2. Draw the blue canvas
+    drawWallPanel(prop.wx - 22, prop.wz + (zOffset * 1.5), prop.wx + 22, prop.wz + (zOffset * 1.5), 87, '#29b6f6', 43);
+    // 3. Draw a blocky human figure on the canvas (Z pushed out to 2.0)
+    const figZ = prop.wz + (zOffset * 2.0);
+    // Head (Skin tone)
+    drawWallPanel(prop.wx - 4, figZ, prop.wx + 4, figZ, 80, '#ffccaa', 68);
+    // Torso (Red shirt)
+    drawWallPanel(prop.wx - 6, figZ, prop.wx + 6, figZ, 68, '#e53935', 50);
+    // Left Leg (Blue pants)
+    drawWallPanel(prop.wx - 6, figZ, prop.wx - 1, figZ, 50, '#1e88e5', 43);
+    // Right Leg (Blue pants)
+    drawWallPanel(prop.wx + 1, figZ, prop.wx + 6, figZ, 50, '#1e88e5', 43);    
+  } else if (prop.type === 'tv') {
+    const tvWidth = 40;
+    const tvDepth = 30;
+    
+    // Draw a wooden TV stand
+    draw3DBox(prop.wx, prop.wz, tvWidth + 10, tvDepth + 10, 0, 20, {
+      top: '#5d4037', front: '#4e342e', back: '#4e342e', left: '#3e2723', right: '#3e2723'
+    });
+
+    // Draw the main purple TV casing
+    draw3DBox(prop.wx, prop.wz, tvWidth, tvDepth, 20, 60, {
+      top: '#512da8', front: '#673ab7', back: '#4527a0', left: '#311b92', right: '#512da8'
+    });
+
+    // Draw the black screen as a flat panel just slightly in front of the TV casing
+    drawWallPanel(prop.wx - 16, prop.wz - tvDepth/2 - 0.5, prop.wx + 16, prop.wz - tvDepth/2 - 0.5, 55, '#000000', 25);
+
+  // ── KITCHEN PROPS ──────────────────────────────────────────────
+  } else if (prop.type === 'fridge') {
+    const w=48, d=42, dir = prop.wz < 0 ? 1 : -1;
+    draw3DBox(prop.wx, prop.wz, w, d, 0, 94, {
+      top:'#e8e8e8', front:'#f5f5f5', back:'#d6d6d6', left:'#cfcfcf', right:'#dedede'
+    });
+    const faceZ = prop.wz + dir*(d/2 + 0.5);
+    drawWallPanel(prop.wx - w/2, faceZ, prop.wx + w/2, faceZ, 64, '#d8d8d8', 62); // freezer/fridge split line
+    drawWallPanel(prop.wx + (dir>0?-w/2+5:w/2-9), faceZ, prop.wx + (dir>0?-w/2+9:w/2-5), faceZ, 60, '#9e9e9e', 36); // handle
+    drawWallPanel(prop.wx + (dir>0?-w/2+5:w/2-9), faceZ, prop.wx + (dir>0?-w/2+9:w/2-5), faceZ, 90, '#9e9e9e', 68); // handle
+
+  } else if (prop.type === 'stove') {
+    const w=46, d=42;
+    draw3DBox(prop.wx, prop.wz, w, d, 0, 38, {
+      top:'#232323', front:'#e0e0e0', back:'#cfcfcf', left:'#c7c7c7', right:'#d3d3d3'
+    });
+    // Four burners on the cooktop
+    [[-12,-9],[12,-9],[-12,9],[12,9]].forEach(([ox,oz])=>{
+      draw3DBox(prop.wx+ox, prop.wz+oz, 9, 9, 38, 38.6, { top:'#111', front:'#111', back:'#111', left:'#111', right:'#111' });
+    });
+
+  } else if (prop.type === 'counter') {
+    const w=90, d=40, dir = prop.wz < 0 ? 1 : -1;
+    draw3DBox(prop.wx, prop.wz, w, d, 0, 34, {
+      top:'#e8e2d0', front:'#cbb994', back:'#b8a578', left:'#b8a578', right:'#c2af86'
+    });
+    // Recessed-look sink basin on top
+    draw3DBox(prop.wx, prop.wz + dir*6, 26, 20, 34, 36.5, {
+      top:'#b0bec5', front:'#90a4ae', back:'#78909c', left:'#78909c', right:'#90a4ae'
+    });
+
+  } else if (prop.type === 'wallcabinet') {
+    const w=54, d=20, dir = prop.wz < 0 ? 1 : -1;
+    draw3DBox(prop.wx, prop.wz, w, d, 95, 132, {
+      top:'#c9a876', front:'#e6d3ae', back:'#d8c095', left:'#d8c095', right:'#e0ca9f'
+    });
+    const faceZ = prop.wz + dir*(d/2 + 0.5);
+    drawWallPanel(prop.wx - 1, faceZ, prop.wx + 1, faceZ, 130, '#a9895c', 97); // seam between cabinet doors
+
+  } else if (prop.type === 'table') {
+    const w=68, d=68;
+    draw3DBox(prop.wx, prop.wz, w, d, 30, 35, {
+      top:'#a9784f', front:'#8d5f3a', back:'#8d5f3a', left:'#8d5f3a', right:'#8d5f3a'
+    });
+    [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx2,sz2])=>{
+      const lx = prop.wx + sx2*(w/2-4), lz = prop.wz + sz2*(d/2-4);
+      drawWallPanel(lx - 1.5, lz, lx + 1.5, lz, 30, '#6d4c30', 0);
+    });
+
+  // ── BASEMENT PROPS ──────────────────────────────────────────────
+  } else if (prop.type === 'washer' || prop.type === 'dryer') {
+    const w=34, d=34, dir = prop.wz < 0 ? 1 : -1;
+    const isWasher = prop.type === 'washer';
+    draw3DBox(prop.wx, prop.wz, w, d, 0, 46, {
+      top:'#eceff1', front: isWasher?'#e3e6e8':'#d7dadc', back:'#cfd2d4', left:'#c7cacc', right:'#d3d6d8'
+    });
+    const faceZ = prop.wz + dir*(d/2 + 0.5);
+    // Round-ish door (approximated with a square inset for a true-3D flat decal, no billboarding)
+    drawWallPanel(prop.wx - 10, faceZ, prop.wx + 10, faceZ, 30, isWasher?'#37474f':'#455a64', 10);
+    drawWallPanel(prop.wx - 15, faceZ, prop.wx + 15, faceZ, 42, '#b0bec5', 38); // control panel strip
+
+  } else if (prop.type === 'workbench') {
+    const w=80, d=30, dir = prop.wz < 0 ? 1 : -1;
+    draw3DBox(prop.wx, prop.wz, w, d, 0, 34, {
+      top:'#8d6e4a', front:'#6d4c30', back:'#5d3f28', left:'#5d3f28', right:'#644329'
+    });
+
+  } else if (prop.type === 'pegboard') {
+    const w=70, d=6, dir = prop.wz < 0 ? 1 : -1;
+    const faceZ = prop.wz + dir*(d/2 + 0.5);
+    drawWallPanel(prop.wx - w/2, faceZ, prop.wx + w/2, faceZ, 90, '#6d5738', 40); // board
+    // A few hanging tool silhouettes
+    [-22,-4,14,30].forEach((ox,i)=>{
+      drawWallPanel(prop.wx+ox, faceZ+dir*0.3, prop.wx+ox+6, faceZ+dir*0.3, 78-(i%2)*10, '#37474f', 55);
+    });
+
+  } else if (prop.type === 'shelf') {
+    const w=70, d=24;
+    draw3DBox(prop.wx, prop.wz, w, d, 40, 45, { top:'#7a6248', front:'#5d4a35', back:'#5d4a35', left:'#5d4a35', right:'#5d4a35' });
+    draw3DBox(prop.wx, prop.wz, w, d, 70, 75, { top:'#7a6248', front:'#5d4a35', back:'#5d4a35', left:'#5d4a35', right:'#5d4a35' });
+    // Storage boxes sitting on the shelves
+    [[-20,45,'#c0392b'],[5,45,'#2980b9'],[22,75,'#d4ac0d']].forEach(([ox,by,col])=>{
+      draw3DBox(prop.wx+ox, prop.wz, 16, 14, by, by+14, { top:col, front:col, back:col, left:col, right:col });
+    });
+
+  } else if (prop.type === 'hanginglight') {
+    drawWallPanel(prop.wx - 1, prop.wz, prop.wx + 1, prop.wz, 122, '#222', 96); // cord
+    draw3DBox(prop.wx, prop.wz, 12, 12, 86, 97, { top:'#fff59d', front:'#fff9c4', back:'#fff9c4', left:'#fff9c4', right:'#fff9c4' });
+
+  // ── BEDROOM PROPS ────────────────────────────────────────────────
+  } else if (prop.type === 'bed') {
+    const w=90, d=120;
+    draw3DBox(prop.wx, prop.wz, w, d, 0, 22, { top:'#6d4c30', front:'#5d3f28', back:'#5d3f28', left:'#5d3f28', right:'#5d3f28' });
+    draw3DBox(prop.wx, prop.wz, w-6, d-6, 22, 30, { top:'#7986cb', front:'#5c6bc0', back:'#5c6bc0', left:'#5c6bc0', right:'#5c6bc0' }); // blanket
+    draw3DBox(prop.wx, prop.wz - d/2 + 14, w-18, 24, 30, 36, { top:'#f5f5f5', front:'#e0e0e0', back:'#e0e0e0', left:'#e0e0e0', right:'#e0e0e0' }); // pillow
+    draw3DBox(prop.wx, prop.wz - d/2, w, 6, 22, 70, { top:'#4a3f66', front:'#4a3f66', back:'#4a3f66', left:'#4a3f66', right:'#4a3f66' }); // headboard
+
+  } else if (prop.type === 'nightstand') {
+    draw3DBox(prop.wx, prop.wz, 26, 26, 0, 30, { top:'#6d4c30', front:'#5d3f28', back:'#5d3f28', left:'#5d3f28', right:'#5d3f28' });
+    drawWallPanel(prop.wx - 1.5, prop.wz, prop.wx + 1.5, prop.wz, 55, '#8d6e4a', 30); // lamp pole
+    draw3DBox(prop.wx, prop.wz, 18, 18, 55, 66, { top:'#fff59d', front:'#fff9c4', back:'#fff9c4', left:'#fff9c4', right:'#fff9c4' }); // shade
+
+  } else if (prop.type === 'dresser') {
+    const w=60, d=30, dir = prop.wz < 0 ? 1 : -1;
+    draw3DBox(prop.wx, prop.wz, w, d, 0, 40, { top:'#6d4c30', front:'#5d3f28', back:'#5d3f28', left:'#5d3f28', right:'#5d3f28' });
+    const faceZ = prop.wz + dir*(d/2 + 0.5);
+    [12, 26].forEach(y=>drawWallPanel(prop.wx - w/2 + 6, faceZ, prop.wx + w/2 - 6, faceZ, y, '#4a3320', y-2));
+    // Mirror mounted above the dresser
+    drawWallPanel(prop.wx - 20, faceZ, prop.wx + 20, faceZ, 90, '#8d6e4a', 45);
+    drawWallPanel(prop.wx - 17, faceZ + dir*0.3, prop.wx + 17, faceZ + dir*0.3, 87, '#cfd8dc', 48);
+
+  } else if (prop.type === 'wardrobe') {
+    const w=50, d=30, dir = prop.wz < 0 ? 1 : -1;
+    draw3DBox(prop.wx, prop.wz, w, d, 0, 100, { top:'#5d4a80', front:'#6a5694', back:'#4a3f66', left:'#4a3f66', right:'#584a7a' });
+    const faceZ = prop.wz + dir*(d/2 + 0.5);
+    drawWallPanel(prop.wx - 1, faceZ, prop.wx + 1, faceZ, 96, '#3d3560', 4); // seam between doors
+
+  // ── BACKYARD PROPS ───────────────────────────────────────────────
+  } else if (prop.type === 'grill') {
+    draw3DBox(prop.wx, prop.wz, 34, 24, 0, 22, { top:'#333', front:'#222', back:'#222', left:'#222', right:'#222' }); // cart
+    draw3DBox(prop.wx, prop.wz, 40, 30, 22, 55, { top:'#2c2c2c', front:'#37474f', back:'#263238', left:'#263238', right:'#2f3d42' }); // body
+    draw3DBox(prop.wx, prop.wz, 34, 26, 55, 62, { top:'#455a64', front:'#37474f', back:'#37474f', left:'#37474f', right:'#37474f' }); // lid
+
+  } else if (prop.type === 'picnictable') {
+    draw3DBox(prop.wx, prop.wz, 90, 30, 28, 32, { top:'#a9784f', front:'#8d5f3a', back:'#8d5f3a', left:'#8d5f3a', right:'#8d5f3a' });
+    draw3DBox(prop.wx, prop.wz - 25, 90, 12, 14, 18, { top:'#8d5f3a', front:'#6d4c30', back:'#6d4c30', left:'#6d4c30', right:'#6d4c30' });
+    draw3DBox(prop.wx, prop.wz + 25, 90, 12, 14, 18, { top:'#8d5f3a', front:'#6d4c30', back:'#6d4c30', left:'#6d4c30', right:'#6d4c30' });
+
+  } else if (prop.type === 'bush') {
+    draw3DBox(prop.wx, prop.wz, 34, 34, 0, 20, { top:'#2e7d32', front:'#256428', back:'#256428', left:'#256428', right:'#256428' });
+    draw3DBox(prop.wx, prop.wz, 26, 26, 14, 32, { top:'#388e3c', front:'#2e7d32', back:'#2e7d32', left:'#2e7d32', right:'#2e7d32' });
+    draw3DBox(prop.wx, prop.wz, 18, 18, 26, 42, { top:'#43a047', front:'#388e3c', back:'#388e3c', left:'#388e3c', right:'#388e3c' });
+
+  } else if (prop.type === 'stump') {
+    draw3DBox(prop.wx, prop.wz, 30, 30, 0, 18, { top:'#a1887f', front:'#6d4c30', back:'#6d4c30', left:'#6d4c30', right:'#6d4c30' });
+  }
+}
+
+function drawSingleEnemy(e) {
+  const p = project(e.x, e.z); 
+  if (!p || p.cz > 650) return;
+  let lungeScale = 1;
+  if (e.attackTimer > 30) lungeScale = 1 + (e.attackTimer - 30) * 0.015;
+  const sc = clamp(p.scale / 2, 0.2, 25) * lungeScale;
+  const w = e.bw * sc, h = e.bh * sc, sx = p.sx, sy = p.sy;
+  ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.ellipse(sx, sy, w * .55, Math.max(4, 8 * sc), 0, 0, TAU); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(sx, sy); ctx.scale(sc, sc); e.draw(e.bw, e.bh, e.col, e.acc, e.flash > 0);
+  if (e.frozen > 0) {
+    ctx.globalAlpha = 0.42;
+    ctx.fillStyle = '#4fc3f7';
+    ctx.beginPath(); ctx.ellipse(0, 0, e.bw * .52, e.bh * .58, 0, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  if (e.burning > 0) {
+    ctx.globalAlpha = 0.28 + Math.sin(gameTime * .3) * 0.08;
+    ctx.fillStyle = '#ff5722';
+    ctx.beginPath(); ctx.ellipse(0, 0, e.bw * .52, e.bh * .58, 0, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+  if (e.hp < e.maxHp) {
+    const bw = w * 1.1, bh = Math.max(3, 7 * sc), bx = sx - bw / 2, by = sy - h * .7 - bh - 4;
+    ctx.fillStyle = '#222'; rrFill(bx, by, bw, bh, 2);
+    const pct = e.hp / e.maxHp; ctx.fillStyle = pct > .5 ? '#4caf50' : pct > .25 ? '#ff9800' : '#f44336'; rrFill(bx, by, bw * pct, bh, 2);
+  }
+}
+
+function drawSinglePowerup(p) {
+  const pr = project(p.x, p.z); 
+  if (!pr || pr.cz > 450) return;
+  const sc = clamp(pr.scale / 2, 0.2, 15), bob = Math.sin(gameTime * .055 + p.bob) * 7 * sc, sx = pr.sx, sy = pr.sy - 32 * sc + bob, sz = 26 * sc;
+  const color = POWERUP_COLOR[p.type] || '#e53935', icon = POWERUP_ICON[p.type] || '❤', label = POWERUP_LABEL[p.type] || 'HEALTH';
+  ctx.save(); ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.beginPath(); ctx.ellipse(sx, pr.sy, sz * .9, sz * .22, 0, 0, TAU); ctx.fill();
+  ctx.shadowColor = color; ctx.shadowBlur = 20 * sc; ctx.strokeStyle = color; ctx.lineWidth = 2 * sc; ctx.globalAlpha = .45 + Math.sin(gameTime * .09) * .35; ctx.beginPath(); ctx.arc(sx, sy, (sz + 6) * (.82 + Math.sin(gameTime * .09) * .18), 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
+  ctx.fillStyle = 'rgba(5,5,20,.85)'; rrFill(sx - sz, sy - sz, sz * 2, sz * 2, sz * .25); ctx.strokeStyle = color; ctx.lineWidth = 2 * sc; rrStroke(sx - sz, sy - sz, sz * 2, sz * 2, sz * .25);
+  ctx.shadowBlur = 12 * sc; ctx.font = Math.round(sz * 1.1) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = color; ctx.fillText(icon, sx, sy + sz * .06);
+  ctx.font = 'bold ' + Math.max(9, Math.round(11 * sc)) + 'px "Courier New",monospace'; ctx.fillStyle = '#fff'; ctx.shadowBlur = 0; ctx.textBaseline = 'alphabetic'; ctx.fillText(label, sx, sy + sz + 12 * sc); ctx.restore();
+}
+
+// ── MASTER RENDER QUEUE ──────────────────────────────────────────
+function drawEntities() {
+  let renderList = [];
+  
+  if (currentLevel.shape === 'square') {
+    roomProps.forEach(prop => {
+      let sortDist = Math.hypot(prop.wx - player.x, prop.wz - player.z);
+      
+      // DEPTH BIAS: Artificially pull the painting 25 units closer during sorting
+      // This guarantees it is drawn AFTER the wall segments it touches.
+      if (prop.type === 'painting') {
+        sortDist -= 25; 
+      }
+      
+      renderList.push({ dist: sortDist, type: 'prop', data: prop });
+    });
+  }
+  if (currentLevel.shape === 'circle') {
+    palmTrees.forEach(t => renderList.push({ dist: Math.hypot(t.wx - player.x, t.wz - player.z), type: 'tree', data: t }));
+  }
+  enemies.forEach(e => renderList.push({ dist: Math.hypot(e.x - player.x, e.z - player.z), type: 'enemy', data: e }));
+  powerups.forEach(p => renderList.push({ dist: Math.hypot(p.x - player.x, p.z - player.z), type: 'powerup', data: p }));
+  
+  // The Painter's Algorithm: Sort from furthest to closest
+  renderList.sort((a, b) => b.dist - a.dist);
+  
+  // Draw them strictly in depth order
+  renderList.forEach(item => {
+    if (item.type === 'tree') drawPalmTree(item.data); // (Your drawPalmTree function stays exactly the same!)
+    else if (item.type === 'enemy') drawSingleEnemy(item.data);
+    else if (item.type === 'powerup') drawSinglePowerup(item.data);
+    else if (item.type === 'prop') drawSingleProp(item.data);
   });
 }
 
@@ -783,7 +1645,9 @@ function drawParticles(){
     const a=p.life/p.maxLife;
     if(p.ss){ ctx.save(); ctx.globalAlpha=a*.9; ctx.fillStyle=p.col; ctx.shadowColor=p.col; ctx.shadowBlur=8; ctx.beginPath(); ctx.arc(p.sx,p.sy,Math.max(.5,p.r*a),0,TAU); ctx.fill(); ctx.restore(); } 
     else {
-      const pr=project(p.x,p.z); if(!pr) return; const sc=clamp(pr.scale/2, 0.1, 15), screenY=pr.sy+(p.vy_acc||0)*sc*2.5;
+      const pr=project(p.x,p.z, p.y || 0); 
+      if(!pr) return; 
+      const sc=clamp(pr.scale/2, 0.1, 15), screenY=pr.sy+(p.vy_acc||0)*sc*2.5;
       ctx.save(); ctx.globalAlpha=a*.9; ctx.fillStyle=p.col; ctx.shadowColor=p.col; ctx.shadowBlur=9; ctx.beginPath(); ctx.arc(pr.sx,screenY,Math.max(.5,p.r*sc*a),0,TAU); ctx.fill(); ctx.restore();
     }
   });
@@ -804,10 +1668,10 @@ function drawHUD(){
   ctx.save(); ctx.font='bold 17px "Courier New",monospace'; ctx.textAlign='right'; ctx.fillStyle='#ffeb3b'; ctx.shadowColor='#000'; ctx.shadowBlur=5; ctx.fillText('WAVE '+wave,W-16,38); ctx.restore();
   const toNext=nextPowerupScore-score; ctx.save(); ctx.font='13px "Courier New",monospace'; ctx.textAlign='left'; ctx.fillStyle=toNext<300?'#ffeb3b':'#aaa'; ctx.fillText('PWR-UP IN: '+toNext+' pts',18,56); ctx.restore();
   if(activePowerup){
-    const bw=Math.min(220,W*.22),bx=W/2-bw/2,by=64,prog=powerupTimer/POWERUP_DURATION, pc=activePowerup==='rapidfire'?'#00e5ff':'#ff9800';
+    const bw=Math.min(220,W*.22),bx=W/2-bw/2,by=64,prog=powerupTimer/POWERUP_DURATION, pc=POWERUP_COLOR[activePowerup] || '#ff9800';
     ctx.save(); ctx.fillStyle='rgba(0,0,0,.55)'; rrFill(bx-4,by-2,bw+8,26,6); ctx.fillStyle='#1a1a1a'; rrFill(bx,by,bw,20,4);
     ctx.fillStyle=pc; ctx.shadowColor=pc; ctx.shadowBlur=8; rrFill(bx,by,bw*prog,20,4); ctx.shadowBlur=0;
-    ctx.font='bold 11px "Courier New",monospace'; ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.fillText(activePowerup==='rapidfire'?'⚡ RAPID FIRE':'💥 HEAVY SHOT',W/2,by+14); ctx.restore();
+    ctx.font='bold 11px "Courier New",monospace'; ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.fillText(POWERUP_HUD_LABEL[activePowerup] || '',W/2,by+14); ctx.restore();
   }
   drawCrosshair();
 }
@@ -845,47 +1709,137 @@ function playerHit(){
 }
 function updateSpawning(){
   if (waveAnimTimer > 0) return;
+  
+  // --- BOSS & VICTORY LOGIC ---
+  if (currentLevel.maxWaves && wave > currentLevel.maxWaves) {
+    if (!currentLevel.bossSpawned) {
+      const bossType = COUCH_TYPES.find(c => c.id === currentLevel.boss);
+      
+      // Spawn at the top doorway for Level 1, or North edge for circular maps
+      let bx = 0, bz = 0;
+      if (currentLevel.shape === 'square') bz = -currentLevel.depth/2 - 80;
+      else bz = -currentLevel.radius - 20;
+      
+      enemies.push({x:bx, z:bz, ...bossType, hp:bossType.hp, maxHp:bossType.hp, spd:bossType.spd, flash:0, bob:0, attackTimer:0, frozen:0, burning:0, burnTickTimer:0});
+      currentLevel.bossSpawned = true;
+    }
+    
+    // If the boss is spawned and all enemies are dead, YOU WIN!
+    if (currentLevel.bossSpawned && enemies.length === 0) {
+      gState = 'victory'; 
+      localStorage.setItem(currentLevel.id + '_cleared', 'true');
+      cancelAnimationFrame(gameRAF); 
+      canvas.style.cursor = 'default'; 
+      if(document.exitPointerLock) document.exitPointerLock(); 
+      menuLoop();
+    }
+    return; // Halt normal endless spawning
+  }
+
+  // --- NORMAL WAVE LOGIC ---
   waveTimer++;
   if (waveTimer < waveInterval) {
     spawnTimer++;
-    if (spawnTimer >= spawnInterval && enemies.length < 3 + wave * 2) { 
+    if (spawnTimer >= spawnInterval && enemies.length < 3 + (wave + (currentLevel.difficultyOffset || 0)) * 2) { 
       spawnTimer = 0; spawnEnemy(); 
       if (wave >= 3 && Math.random() < .28) spawnEnemy(); 
       if (wave >= 6 && Math.random() < .22) spawnEnemy(); 
     }
   } else if (enemies.length === 0) {
-    waveTimer = 0; spawnTimer = 0; waveAnimOld = wave; wave++; waveAnimNew = wave; waveAnimTimer = 180;
-    spawnInterval = Math.max(38, spawnInterval - 8); waveInterval = Math.max(900, waveInterval - 90);
+    waveTimer = 0; spawnTimer = 0; 
+    
+    // Check if the next wave is the Boss wave
+    if (currentLevel.maxWaves && wave === currentLevel.maxWaves) {
+        wave++; 
+        waveAnimOld = wave - 1; 
+        waveAnimNew = "BOSS"; 
+        waveAnimTimer = 180;
+    } else {
+        waveAnimOld = wave; wave++; waveAnimNew = wave; waveAnimTimer = 180;
+        spawnInterval = Math.max(38, spawnInterval - 8); waveInterval = Math.max(900, waveInterval - 90);
+    }
   }
 }
 
 // ── buttons ──────────────────────────────────────────────────────
+function getSettingsLayout(){
+  const titleY = H*0.10;
+  const sensLabelY = H*0.19;
+  const sensRowY = sensLabelY + 34; // fixed pixel gap so it stays tight regardless of H
+  const topY = sensRowY + 50;
+  const backY = H - 70;
+  // Fit exactly 6 rows between topY and the back button, shrinking the gap on short (mobile landscape) screens
+  const rowGap = Math.max(30, Math.min(58, (backY - 40 - topY) / 5));
+  const rowY = [0,1,2,3,4,5].map(i => topY + i*rowGap);
+  return { titleY, sensLabelY, sensRowY, rowY, backY };
+}
 function getButtons(){
-  const bw = Math.min(180, W/3 - 20);
+  // Default button width for screens like Start, Settings, and Game Over
+  const bw = Math.min(180, W/3 - 20); 
+  
   if(gState==='start') {
-    return[
+    return [
       {id:'levelselect', x: W/2 - bw*1.5 - 15, y: H*.85, w: bw, h: 52, label:'▶ CHOOSE LEVEL', col:'#2e7d32',hc:'#43a047'},
       {id:'settings', x: W/2 - bw/2,        y: H*.85, w: bw, h: 52, label:'⚙ SETTINGS', col:'#0277bd',hc:'#0288d1'},
       {id:'close',    x: W/2 + bw/2 + 15,   y: H*.85, w: bw, h: 52, label:'✕ CLOSE', col:'#c62828',hc:'#e53935'}
     ];
   }
+  
   if(gState==='levelselect') {
     let btns = [];
+    const lbw = 380; // Button width for the grid
+    const lbh = 60;  // Button height for the grid
+    const gap = 20; 
+    const startY = H*.25;
+
     LEVEL_DATA.forEach((lvl, index) => {
-      btns.push({ id: 'start_' + index, x: W/2 - 175, y: H*.3 + (index * 80), w: 350, h: 60, label: lvl.name, col:'#8e44ad', hc:'#9b59b6' });
+      const col = index % 2; 
+      const row = Math.floor(index / 2);
+      const bx = (W/2 - lbw - 15) + (col * (lbw + 30)); 
+      const by = startY + (row * (lbh + gap));
+      const isTutorial = lvl.id === 'tutorial';
+      btns.push({ id: 'start_' + index, x: bx, y: by, w: lbw, h: lbh, label: lvl.name, col: isTutorial ? '#2e7d32' : '#f9a825', hc: isTutorial ? '#43a047' : '#fbc02d', textCol: isTutorial ? '#fff' : '#3e2723', levelId: lvl.id });
     });
+    
     btns.push({id:'mainmenu', x: W/2 - 100, y: H*.85, w: 200, h: 52, label:'↺ BACK', col:'#2e7d32',hc:'#43a047'});
+    btns.push({id:'reset_saves', x: W - 220, y: H - 80, w: 180, h: 42, label:'✕ CLEAR SAVES', col:'#c62828',hc:'#e53935'});
     return btns;
   }
+  
   if(gState==='settings') {
-    const list = [{id:'bind_forward', y:H*0.25, lbl:'Move Forward', key:'forward'}, {id:'bind_backward', y:H*0.35, lbl:'Move Backward', key:'backward'}, {id:'bind_left', y:H*0.45, lbl:'Move Left', key:'left'}, {id:'bind_right', y:H*0.55, lbl:'Move Right', key:'right'}, {id:'bind_shoot', y:H*0.65, lbl:'Shoot (Secondary)', key:'shoot'}, {id:'bind_pause', y:H*0.75, lbl:'Pause', key:'pause'}];
+    const L = getSettingsLayout();
+    const list = [{id:'bind_forward', y:L.rowY[0], lbl:'Move Forward', key:'forward'}, {id:'bind_backward', y:L.rowY[1], lbl:'Move Backward', key:'backward'}, {id:'bind_left', y:L.rowY[2], lbl:'Move Left', key:'left'}, {id:'bind_right', y:L.rowY[3], lbl:'Move Right', key:'right'}, {id:'bind_shoot', y:L.rowY[4], lbl:'Shoot (Secondary)', key:'shoot'}, {id:'bind_pause', y:L.rowY[5], lbl:'Pause', key:'pause'}];
     let btns = list.map(item => ({ id: item.id, x: W/2 + 20, y: item.y, w: 200, h: 40, label: waitingForBind === item.key ? 'PRESS ANY KEY' : controls[item.key], col: waitingForBind === item.key ? '#f57c00' : '#424242', hc: '#616161' }));
-    btns.push({id:'mainmenu', x: W/2 - 100, y: H*.85, w: 200, h: 52, label:'↺ BACK', col:'#2e7d32',hc:'#43a047'});
+    btns.push({id:'sens_down', x: W/2 - 150, y: L.sensRowY - 19, w: 54, h: 38, label:'−', col:'#424242', hc:'#616161'});
+    btns.push({id:'sens_up',   x: W/2 + 96,  y: L.sensRowY - 19, w: 54, h: 38, label:'+', col:'#424242', hc:'#616161'});
+    btns.push({id:'mainmenu', x: W/2 - 100, y: L.backY, w: 200, h: 52, label:'↺ BACK', col:'#2e7d32',hc:'#43a047'});
     return btns;
   }
-  if(gState==='paused') return [{id:'resume',   x: W/2 - 115, y: H*.45, w: 230, h: 62, label:'▶ RESUME', col:'#2e7d32',hc:'#43a047'}, {id:'mainmenu', x: W/2 - 115, y: H*.58, w: 230, h: 52, label:'🏠 MAIN MENU', col:'#0277bd',hc:'#0288d1'}];
-  if(gState==='gameover') return[{id:'restart',  x: W/2 - bw*1.5 - 15, y: H*.75, w: bw, h: 52, label:'↺ RESTART', col:'#2e7d32',hc:'#43a047'}, {id:'mainmenu', x: W/2 - bw/2,        y: H*.75, w: bw, h: 52, label:'🏠 MENU',    col:'#0277bd',hc:'#0288d1'}, {id:'close',    x: W/2 + bw/2 + 15,   y: H*.75, w: bw, h: 52, label:'✕ CLOSE',   col:'#c62828',hc:'#e53935'}];
-  return[];
+  
+  if(gState==='paused') {
+    return [
+      {id:'resume',   x: W/2 - 115, y: H*.45, w: 230, h: 62, label:'▶ RESUME', col:'#2e7d32',hc:'#43a047'}, 
+      {id:'mainmenu', x: W/2 - 115, y: H*.58, w: 230, h: 52, label:'🏠 MAIN MENU', col:'#0277bd',hc:'#0288d1'}
+    ];
+  }
+  
+  if(gState==='gameover' || gState==='victory') {
+    return [
+      {id:'restart',  x: W/2 - bw*1.5 - 15, y: H*.75, w: bw, h: 52, label:'↺ RESTART', col:'#2e7d32',hc:'#43a047'}, 
+      {id:'mainmenu', x: W/2 - bw/2,        y: H*.75, w: bw, h: 52, label:'🏠 MENU',    col:'#0277bd',hc:'#0288d1'}, 
+      {id:'close',    x: W/2 + bw/2 + 15,   y: H*.75, w: bw, h: 52, label:'✕ CLOSE',   col:'#c62828',hc:'#e53935'}
+    ];
+  }
+  
+  if(gState==='confirm_reset') {
+    return [
+      {id: 'confirm_yes', x: W/2 - 190, y: H/2 + 30, w: 180, h: 52, label: '✔ YES, WIPE', col: '#c62828', hc: '#e53935'},
+      {id: 'confirm_no',  x: W/2 + 10,  y: H/2 + 30, w: 180, h: 52, label: '✕ CANCEL',   col: '#424242', hc: '#616161'}
+    ];
+  }
+  
+  // Failsafe: return empty array if state is unknown
+  return [];
 }
 
 function drawButtons(){
@@ -895,7 +1849,45 @@ function drawButtons(){
     ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=2; rrStroke(b.x,b.y,b.w,b.h,13);
     ctx.fillStyle='rgba(255,255,255,.14)'; rrFill(b.x+5,b.y+5,b.w-10,b.h/2-4,8);
     ctx.font='bold '+Math.round(b.h*.36)+'px "Courier New",monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle='#fff'; ctx.shadowBlur=0; ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2+1); ctx.textBaseline='alphabetic'; ctx.restore();
+    ctx.fillStyle=b.textCol||'#fff'; ctx.shadowBlur=0; ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2+1); ctx.textBaseline='alphabetic'; ctx.restore();
+    if (b.id.startsWith('start_')) {
+      // 1. Figure out which level this button belongs to
+      const levelIndex = parseInt(b.id.split('_')[1]);
+      const lvl = LEVEL_DATA[levelIndex];
+
+      // 2. Only draw the star if the level has a win condition (maxWaves)
+      if (lvl.maxWaves) {
+        const isCleared = localStorage.getItem(b.levelId + '_cleared') === 'true';
+        
+        const starX = b.x + 22; // Positioned safely to the left
+        const starY = b.y + b.h / 2;
+        
+        ctx.save();
+        ctx.translate(starX, starY);
+        
+        // Star drawing path
+        ctx.beginPath();
+        for (let i = 0; i < 5; i++) {
+          ctx.lineTo(Math.cos((18 + i * 72) * Math.PI / 180) * 12, -Math.sin((18 + i * 72) * Math.PI / 180) * 12);
+          ctx.lineTo(Math.cos((54 + i * 72) * Math.PI / 180) * 5, -Math.sin((54 + i * 72) * Math.PI / 180) * 5);
+        }
+        ctx.closePath();
+        
+        if (isCleared) {
+          // Filled Gold Star
+          ctx.fillStyle = '#ffca28';
+          ctx.shadowColor = '#ffc107';
+          ctx.shadowBlur = 10;
+          ctx.fill();
+        } else {
+          // Empty/Dark Star Outline
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
   });
 }
 
@@ -906,7 +1898,19 @@ function handleBtn(id){
   else if(id==='settings') gState = 'settings';
   else if(id==='mainmenu') { waitingForBind = null; gState = 'start'; }
   else if(id.startsWith('bind_')) waitingForBind = id.split('_')[1];
+  else if(id==='sens_down'){ mouseSensitivity = Math.round(clamp(mouseSensitivity - 0.1, 0.2, 3.0) * 10) / 10; localStorage.setItem('mouseSensitivity', mouseSensitivity); }
+  else if(id==='sens_up'){ mouseSensitivity = Math.round(clamp(mouseSensitivity + 0.1, 0.2, 3.0) * 10) / 10; localStorage.setItem('mouseSensitivity', mouseSensitivity); }
   else if(id==='resume') resumeGame();
+// Open the confirmation pop-up instead of instantly deleting
+  else if(id==='reset_saves') gState = 'confirm_reset'; 
+  // Handle the pop-up choices
+  else if(id==='confirm_yes') {
+    localStorage.clear();    
+    gState = 'levelselect';   
+  }
+  else if(id==='confirm_no') {
+    gState = 'levelselect';     // Just return to the menu safely
+  }
   else if(id==='close'){ if(document.exitPointerLock) document.exitPointerLock(); window.close(); document.body.innerHTML='<div style="background:#000;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:\'Courier New\',monospace;font-size:22px;text-align:center;padding:40px">Thanks for playing COUCH ATTACK!<br><br>You can close this tab.</div>'; }
 }
 
@@ -943,29 +1947,96 @@ function drawPauseScreen() {
 
 function menuLoop(){
   menuTime++; 
+  if(isTouchDevice) mobileControlsEl.classList.remove('active');
   if(gState==='paused') {
     ctx.save(); ctx.translate(shakeX,shakeY); ctx.clearRect(-30,-30,W+60,H+60);
-    drawSky(); drawGround(); drawShoreBoundary(); drawGroundDetails(); drawRoomProps();
-    [...palmTrees].sort((a,b)=>Math.hypot(b.wx-player.x,b.z-player.z)-Math.hypot(a.wx-player.x,a.wz-player.z)).forEach(t=>drawPalmTree(t));
-    drawPowerups(); drawEnemies(); drawBullets(); drawParticles(); drawScoreFloats(); drawGun();
+    drawSky(); drawGround(); drawShoreBoundary(); drawGroundDetails(); drawCeiling();
+    drawEntities();
+    drawBullets(); drawParticles(); drawScoreFloats(); drawGun();
     ctx.restore(); drawHUD(); drawPauseScreen(); 
   } else {
     ctx.clearRect(0,0,W,H);
     if(gState==='start') drawStartScreen(); else if(gState==='levelselect') { const bg=ctx.createLinearGradient(0,0,0,H); bg.addColorStop(0,'#020d1e'); bg.addColorStop(1,'#160429'); ctx.fillStyle=bg; ctx.fillRect(0,0,W,H); ctx.save(); ctx.textAlign='center'; ctx.font='bold 40px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.fillText('SELECT A LEVEL', W/2, H*0.15); ctx.restore(); }
-    else if(gState==='settings') { const bg=ctx.createLinearGradient(0,0,0,H); bg.addColorStop(0,'#020d1e'); bg.addColorStop(1,'#041a38'); ctx.fillStyle=bg; ctx.fillRect(0,0,W,H); ctx.save(); ctx.textAlign='center'; ctx.font='bold 40px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.fillText('SETTINGS & CONTROLS', W/2, H*0.12); ctx.font='16px "Courier New",monospace'; ctx.fillStyle='#aaa'; ctx.fillText('Looking around is permanently tied to Mouse Movement.', W/2, H*0.17); ctx.fillText('Left Click will also always work for shooting.', W/2, H*0.20); ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.font='bold 22px "Courier New",monospace'; ctx.fillStyle='#fff'; const list = [{y:H*0.25+20, lbl:'Move Forward'}, {y:H*0.35+20, lbl:'Move Backward'}, {y:H*0.45+20, lbl:'Move Left'}, {y:H*0.55+20, lbl:'Move Right'}, {y:H*0.65+20, lbl:'Secondary Shoot'}, {y:H*0.75+20, lbl:'Pause Game'}]; list.forEach(item => ctx.fillText(item.lbl, W/2 - 20, item.y)); ctx.restore(); }
-    else if(gState==='gameover') { ctx.fillStyle='rgba(0,0,0,.82)'; ctx.fillRect(0,0,W,H); ctx.save(); ctx.textAlign='center'; ctx.shadowColor='#f44336'; ctx.shadowBlur=40; ctx.font='bold '+Math.min(76,Math.round(W*.1))+'px "Courier New",monospace'; ctx.fillStyle='#ef5350'; ctx.fillText('GAME OVER',W/2,H*.3); ctx.shadowBlur=0; ctx.font='bold '+Math.min(34,Math.round(W*.047))+'px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.fillText('FINAL SCORE: '+score,W/2,H*.42); ctx.font=Math.min(20,Math.round(W*.028))+'px "Courier New",monospace'; ctx.fillStyle='#bdbdbd'; ctx.fillText('Wave: '+wave+'   Couches Defeated: '+kills,W/2,H*.51); ctx.restore(); }
+    else if(gState==='confirm_reset') {
+      // 1. Draw the normal level select background
+      const bg=ctx.createLinearGradient(0,0,0,H); bg.addColorStop(0,'#020d1e'); bg.addColorStop(1,'#160429'); ctx.fillStyle=bg; ctx.fillRect(0,0,W,H); 
+      
+      // 2. Draw a dark semi-transparent overlay to focus attention
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0,0,W,H);
+
+      // 3. Draw the red warning box
+      const boxW = Math.min(500, W * 0.9);
+      const boxH = 220;
+      const boxX = W/2 - boxW/2;
+      const boxY = H/2 - boxH/2 - 40;
+
+      ctx.save();
+      ctx.shadowColor = '#c62828'; ctx.shadowBlur = 30;
+      ctx.fillStyle = '#111';
+      rrFill(boxX, boxY, boxW, boxH, 16); // Re-using your rounded rect function
+      ctx.strokeStyle = '#c62828'; ctx.lineWidth = 4;
+      rrStroke(boxX, boxY, boxW, boxH, 16);
+
+      // 4. Draw the warning text
+      ctx.shadowBlur = 0;
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 32px "Courier New",monospace';
+      ctx.fillStyle = '#ef5350';
+      ctx.fillText('WARNING', W/2, boxY + 50);
+
+      ctx.font = '18px "Courier New",monospace';
+      ctx.fillStyle = '#fff';
+      ctx.fillText('Are you sure you want to delete', W/2, boxY + 100);
+      ctx.fillText('all your saved level progress?', W/2, boxY + 130);
+      ctx.fillText('This action cannot be undone.', W/2, boxY + 160);
+      ctx.restore();
+    }
+    else if(gState==='settings') {
+      const bg=ctx.createLinearGradient(0,0,0,H); bg.addColorStop(0,'#020d1e'); bg.addColorStop(1,'#041a38'); ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+      const L = getSettingsLayout();
+      ctx.save();
+      ctx.textAlign='center'; ctx.font='bold '+Math.min(40,Math.round(H*0.09))+'px "Courier New",monospace'; ctx.fillStyle='#fff'; ctx.fillText('SETTINGS & CONTROLS', W/2, L.titleY);
+      ctx.font='16px "Courier New",monospace'; ctx.fillStyle='#aaa';
+      ctx.fillText(isTouchDevice ? 'Drag anywhere on screen to look around. Tap FIRE to shoot.' : 'Looking around is tied to Mouse Movement. Left Click also fires.', W/2, L.sensLabelY - 22);
+      ctx.fillStyle='#aaa'; ctx.fillText('Mouse & Arrow-Key Look Sensitivity', W/2, L.sensLabelY);
+      ctx.font='bold 22px "Courier New",monospace'; ctx.fillStyle='#ffeb3b'; ctx.fillText(mouseSensitivity.toFixed(1) + 'x', W/2, L.sensRowY);
+      ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.font='bold 22px "Courier New",monospace'; ctx.fillStyle='#fff';
+      const list = [{y:L.rowY[0]+20, lbl:'Move Forward'}, {y:L.rowY[1]+20, lbl:'Move Backward'}, {y:L.rowY[2]+20, lbl:'Move Left'}, {y:L.rowY[3]+20, lbl:'Move Right'}, {y:L.rowY[4]+20, lbl:'Secondary Shoot'}, {y:L.rowY[5]+20, lbl:'Pause Game'}];
+      list.forEach(item => ctx.fillText(item.lbl, W/2 - 20, item.y));
+      ctx.restore();
+    }
+    else if(gState==='gameover' || gState==='victory') { 
+      ctx.fillStyle='rgba(0,0,0,.82)'; ctx.fillRect(0,0,W,H); 
+      ctx.save(); ctx.textAlign='center'; 
+      
+      const isWin = gState === 'victory';
+      ctx.shadowColor = isWin ? '#4caf50' : '#f44336'; 
+      ctx.shadowBlur=40; 
+      ctx.font='bold '+Math.min(76,Math.round(W*.1))+'px "Courier New",monospace'; 
+      ctx.fillStyle = isWin ? '#81c784' : '#ef5350'; 
+      ctx.fillText(isWin ? 'LEVEL CLEARED!' : 'GAME OVER', W/2, H*.3); 
+      ctx.shadowBlur=0; 
+      
+      ctx.font='bold '+Math.min(34,Math.round(W*.047))+'px "Courier New",monospace'; 
+      ctx.fillStyle='#fff'; ctx.fillText('FINAL SCORE: '+score,W/2,H*.42); 
+      ctx.font=Math.min(20,Math.round(W*.028))+'px "Courier New",monospace'; 
+      ctx.fillStyle='#bdbdbd'; 
+      ctx.fillText(isWin ? 'Boss Defeated!   Couches Destroyed: '+kills : 'Wave: '+wave+'   Couches Defeated: '+kills, W/2, H*.51); 
+      ctx.restore(); 
+    }
   }
   drawButtons(); menuRAF=requestAnimationFrame(menuLoop);
 }
 
 // ── main loop ────────────────────────────────────────────────────
 function gameLoop(){
+  if(isTouchDevice) mobileControlsEl.classList.add('active');
   gameTime++;
   if(shakeMag>0){ shakeX=(Math.random()-.5)*shakeMag; shakeY=(Math.random()-.5)*shakeMag; shakeMag*=.83; if(shakeMag<.5){shakeMag=0;shakeX=0;shakeY=0;} }
   ctx.save(); ctx.translate(shakeX,shakeY); ctx.clearRect(-30,-30,W+60,H+60);
-  drawSky(); drawGround(); drawShoreBoundary(); drawGroundDetails(); drawRoomProps();
-  [...palmTrees].sort((a,b)=>Math.hypot(b.wx-player.x,b.z-player.z)-Math.hypot(a.wx-player.x,a.wz-player.z)).forEach(t=>drawPalmTree(t));
-  drawPowerups(); drawEnemies(); drawBullets(); drawParticles(); drawScoreFloats(); drawGun();
+  drawSky(); drawGround(); drawShoreBoundary(); drawGroundDetails(); drawCeiling();
+  drawEntities();
+  drawBullets(); drawParticles(); drawScoreFloats(); drawGun();
   if(hitFlash>0){ ctx.fillStyle='rgba(244,67,54,'+(hitFlash/35*.38)+')'; ctx.fillRect(-30,-30,W+60,H+60); hitFlash--; }
   ctx.restore(); drawHUD(); drawWaveTransition();
   updatePlayer();
@@ -979,6 +2050,7 @@ function gameLoop(){
 // ── init ────────────────────────────────────────────────────────
 function startGame(levelIndex){
   currentLevel = LEVEL_DATA[levelIndex];
+  currentLevel.bossSpawned = false;
   cancelAnimationFrame(menuRAF); cancelAnimationFrame(gameRAF); menuRAF=null; gameRAF=null;
   score=0; lives=3; kills=0; wave=currentLevel.startingWave; waveTimer=0; waveInterval=1800; spawnTimer=0; spawnInterval=currentLevel.baseSpawnInterval; gameTime=0;
   gunCooldown=0; gunFireRate=18; gunDamage=1; activePowerup=null; powerupTimer=0; hitFlash=0; shakeMag=0; shakeX=0; shakeY=0; nextPowerupScore=1500;
