@@ -34,6 +34,16 @@ canvas{display:block;width:100vw;height:100vh;touch-action:none;}
 }
 #btnShoot.active-touch{ background:rgba(239,83,80,.8); }
 
+#btnFullscreen{
+  display:none; position:fixed; top:14px; right:14px; z-index:60; pointer-events:auto;
+  width:46px; height:46px; border-radius:10px; touch-action:none;
+  align-items:center; justify-content:center; font-size:22px;
+  background:rgba(40,40,50,.55); border:2px solid rgba(255,255,255,.4); color:#fff;
+  padding:0; margin:0; outline:none; -webkit-appearance:none; appearance:none;
+  -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent;
+}
+#btnFullscreen.active{ display:flex; }
+
 #rotateOverlay{
   display:none; position:fixed; inset:0; z-index:9999; background:#000; color:#fff;
   align-items:center; justify-content:center; text-align:center; padding:30px;
@@ -56,6 +66,8 @@ canvas{display:block;width:100vw;height:100vh;touch-action:none;}
   </div>
   <button id="btnShoot" class="mbtn">FIRE</button>
 </div>
+
+<button id="btnFullscreen" title="Toggle Fullscreen">⛶</button>
 
 <div id="rotateOverlay">
   <div>🔄<br>Please rotate your device<br>to landscape to play</div>
@@ -372,6 +384,33 @@ canvas.addEventListener('contextmenu', e=>e.preventDefault());
 const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 const mobileControlsEl = document.getElementById('mobileControls');
 const rotateOverlayEl  = document.getElementById('rotateOverlay');
+const btnFullscreenEl  = document.getElementById('btnFullscreen');
+
+// ── fullscreen toggle (hides Safari's address/tab bar so it doesn't eat into the play area) ──
+function isFullscreen(){
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+function enterFullscreen(){
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+  if(req){ req.call(el).catch ? req.call(el).catch(()=>{}) : req.call(el); }
+  // Fallback nudge for browsers (older iOS Safari) that don't support the Fullscreen API at all:
+  // scrolling by 1px makes Safari's chrome collapse on its own.
+  setTimeout(()=>{ window.scrollTo(0,1); }, 60);
+}
+function exitFullscreen(){
+  const ex = document.exitFullscreen || document.webkitExitFullscreen;
+  if(ex){ const r = ex.call(document); if(r && r.catch) r.catch(()=>{}); }
+}
+function updateFullscreenIcon(){
+  btnFullscreenEl.textContent = isFullscreen() ? '⤓' : '⛶';
+}
+document.addEventListener('fullscreenchange', updateFullscreenIcon);
+document.addEventListener('webkitfullscreenchange', updateFullscreenIcon);
+btnFullscreenEl.addEventListener('pointerdown', e=>{
+  e.preventDefault(); e.stopPropagation();
+  if(isFullscreen()) exitFullscreen(); else enterFullscreen();
+});
 
 // Drag-to-look: touching anywhere on the canvas (that isn't one of the dedicated
 // D-pad/FIRE buttons, which are separate elements above the canvas) starts a look
@@ -1948,6 +1987,7 @@ function drawPauseScreen() {
 function menuLoop(){
   menuTime++; 
   if(isTouchDevice) mobileControlsEl.classList.remove('active');
+  if(isTouchDevice) btnFullscreenEl.classList.add('active');
   if(gState==='paused') {
     ctx.save(); ctx.translate(shakeX,shakeY); ctx.clearRect(-30,-30,W+60,H+60);
     drawSky(); drawGround(); drawShoreBoundary(); drawGroundDetails(); drawCeiling();
@@ -2031,6 +2071,7 @@ function menuLoop(){
 // ── main loop ────────────────────────────────────────────────────
 function gameLoop(){
   if(isTouchDevice) mobileControlsEl.classList.add('active');
+  if(isTouchDevice) btnFullscreenEl.classList.remove('active');
   gameTime++;
   if(shakeMag>0){ shakeX=(Math.random()-.5)*shakeMag; shakeY=(Math.random()-.5)*shakeMag; shakeMag*=.83; if(shakeMag<.5){shakeMag=0;shakeX=0;shakeY=0;} }
   ctx.save(); ctx.translate(shakeX,shakeY); ctx.clearRect(-30,-30,W+60,H+60);
