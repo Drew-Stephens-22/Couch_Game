@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <title>Couch Attack!</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -54,6 +57,21 @@ canvas{width:100dvw;height:100dvh;} /* dvw/dvh track the real visible area on mo
 }
 #btnFullscreen.active{ display:flex; }
 
+#addHomeHint{
+  display:none; position:fixed; top:0; left:0; right:0; z-index:70;
+  background:rgba(20,20,30,.94); color:#fff; padding:10px 44px 10px 14px;
+  padding-top:calc(env(safe-area-inset-top,0px) + 10px);
+  font-family:'Courier New',monospace; font-size:13px; line-height:1.4;
+  border-bottom:2px solid rgba(255,255,255,.25);
+}
+#addHomeHint.active{ display:block; }
+#addHomeHintClose{
+  position:absolute; top:calc(env(safe-area-inset-top,0px) + 6px); right:10px;
+  width:28px; height:28px; border-radius:6px; background:rgba(255,255,255,.15);
+  border:none; color:#fff; font-size:15px; font-family:inherit; line-height:1;
+  padding:0; -webkit-appearance:none; appearance:none; -webkit-tap-highlight-color:transparent;
+}
+
 #rotateOverlay{
   display:none; position:fixed; inset:0; z-index:9999; background:#000; color:#fff;
   align-items:center; justify-content:center; text-align:center; padding:30px;
@@ -78,6 +96,11 @@ canvas{width:100dvw;height:100dvh;} /* dvw/dvh track the real visible area on mo
 </div>
 
 <button id="btnFullscreen" title="Toggle Fullscreen">⛶</button>
+
+<div id="addHomeHint">
+  <span>📲 Tip: for a real full-screen game with no Safari bars at all, tap <b>Share</b> → <b>Add to Home Screen</b>, then launch it from there.</span>
+  <button id="addHomeHintClose">✕</button>
+</div>
 
 <div id="rotateOverlay">
   <div>🔄<br>Please rotate your device<br>to landscape to play</div>
@@ -392,7 +415,7 @@ canvas.addEventListener('click', ()=>{
 });
 
 canvas.addEventListener('mousedown', e=>{
-  if(isTouchDevice) return; // touch taps are fully handled by the dedicated pointerdown handler below; without this guard, mobile Safari's synthetic mousedown re-processes the same tap against whatever screen the pointerdown already switched to
+  if(isTouchDevice) return; // touch taps are fully handled by the dedicated touchstart handler below; without this guard, mobile Safari's synthetic mousedown could re-process the same tap against whatever screen the touchstart already switched to
   if(gState==='playing'){ mouseDown=true; return; }
   const r=canvas.getBoundingClientRect();
   const mx=e.clientX-r.left, my=e.clientY-r.top;
@@ -405,21 +428,22 @@ canvas.addEventListener('contextmenu', e=>e.preventDefault());
 
 // ── mobile / touch support ───────────────────────────────────────
 const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const isIOS = /iP(hone|od|ad)/.test(navigator.platform) || (navigator.userAgent.includes('Macintosh') && isTouchDevice);
+const isStandalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
 const mobileControlsEl = document.getElementById('mobileControls');
 const rotateOverlayEl  = document.getElementById('rotateOverlay');
 const btnFullscreenEl  = document.getElementById('btnFullscreen');
+const addHomeHintEl    = document.getElementById('addHomeHint');
 
-// ── fullscreen toggle (hides Safari's address/tab bar so it doesn't eat into the play area) ──
+// ── fullscreen toggle (works on Android Chrome etc; iOS Safari doesn't support it in a
+// normal browser tab at all - see the Add to Home Screen hint below for the real fix there) ──
 function isFullscreen(){
   return !!(document.fullscreenElement || document.webkitFullscreenElement);
 }
 function enterFullscreen(){
   const el = document.documentElement;
   const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
-  if(req){ req.call(el).catch ? req.call(el).catch(()=>{}) : req.call(el); }
-  // Fallback nudge for browsers (older iOS Safari) that don't support the Fullscreen API at all:
-  // scrolling by 1px makes Safari's chrome collapse on its own.
-  setTimeout(()=>{ window.scrollTo(0,1); }, 60);
+  if(req){ const r = req.call(el); if(r && r.catch) r.catch(()=>{}); }
 }
 function exitFullscreen(){
   const ex = document.exitFullscreen || document.webkitExitFullscreen;
@@ -430,67 +454,84 @@ function updateFullscreenIcon(){
 }
 document.addEventListener('fullscreenchange', updateFullscreenIcon);
 document.addEventListener('webkitfullscreenchange', updateFullscreenIcon);
-btnFullscreenEl.addEventListener('pointerdown', e=>{
-  e.preventDefault(); e.stopPropagation();
-  if(isFullscreen()) exitFullscreen(); else enterFullscreen();
+btnFullscreenEl.addEventListener('click', ()=>{ if(isFullscreen()) exitFullscreen(); else enterFullscreen(); });
+
+// A normal Safari browser tab on iPhone can never fully hide its UI - the only way to get a
+// truly full, chrome-free screen there is launching from a home-screen icon (standalone mode).
+// Surface a one-time, dismissible hint pointing people there instead of fighting Safari's chrome.
+const showAddHomeHint = isTouchDevice && isIOS && !isStandalone && localStorage.getItem('hideAddHomeHint') !== 'true';
+document.getElementById('addHomeHintClose').addEventListener('touchstart', e=>{
+  e.preventDefault();
+  addHomeHintEl.classList.remove('active');
+  localStorage.setItem('hideAddHomeHint','true');
+}, {passive:false});
+document.getElementById('addHomeHintClose').addEventListener('click', ()=>{
+  addHomeHintEl.classList.remove('active');
+  localStorage.setItem('hideAddHomeHint','true');
 });
 
-// Drag-to-look: touching anywhere on the canvas (that isn't one of the dedicated
-// D-pad/FIRE buttons, which are separate elements above the canvas) starts a look
-// drag that tracks that same finger until it lifts off the screen.
-let lookPointerId = null, lookLastX = 0, lookLastY = 0;
+// Drag-to-look: touching anywhere on the canvas (outside the dedicated D-pad/FIRE buttons,
+// which are separate elements layered above the canvas) starts a look drag that tracks that
+// same finger until it lifts off the screen. This uses classic Touch Events rather than
+// Pointer Events - Safari's touch-event handling has been stable since the very first
+// iPhone, and calling preventDefault() on touchstart is the long-established, reliable way
+// to stop Safari from *also* firing a delayed synthetic mousedown/click for the same tap.
+let lookTouchId = null, lookLastX = 0, lookLastY = 0;
 
-canvas.addEventListener('pointerdown', e=>{
-  if(e.pointerType !== 'touch') return;
+canvas.addEventListener('touchstart', e=>{
   if(gState !== 'playing'){
     e.preventDefault();
-    // Menu/UI taps on touch devices, mirroring the desktop mousedown button handling
-    const r=canvas.getBoundingClientRect();
-    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    const t = e.changedTouches[0];
+    const r = canvas.getBoundingClientRect();
+    const mx = t.clientX - r.left, my = t.clientY - r.top;
     getButtons().forEach(b=>{ if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h) handleBtn(b.id); });
     return;
   }
-  if(lookPointerId === null){
+  if(lookTouchId === null){
     e.preventDefault();
-    lookPointerId = e.pointerId;
-    lookLastX = e.clientX; lookLastY = e.clientY;
+    const t = e.changedTouches[0];
+    lookTouchId = t.identifier;
+    lookLastX = t.clientX; lookLastY = t.clientY;
   }
-});
-canvas.addEventListener('pointermove', e=>{
-  if(e.pointerType !== 'touch' || gState !== 'playing') return;
-  if(e.pointerId === lookPointerId){
-    const dx = e.clientX - lookLastX, dy = e.clientY - lookLastY;
-    player.yaw += dx * 0.0035 * mouseSensitivity;
-    player.pitch += dy * 0.011 * mouseSensitivity;
-    player.pitch = clamp(player.pitch, -2.8, 2.8);
-    lookLastX = e.clientX; lookLastY = e.clientY;
+}, {passive:false});
+
+canvas.addEventListener('touchmove', e=>{
+  if(gState !== 'playing' || lookTouchId === null) return;
+  for(const t of e.changedTouches){
+    if(t.identifier === lookTouchId){
+      e.preventDefault();
+      const dx = t.clientX - lookLastX, dy = t.clientY - lookLastY;
+      player.yaw += dx * 0.0035 * mouseSensitivity;
+      player.pitch += dy * 0.011 * mouseSensitivity;
+      player.pitch = clamp(player.pitch, -2.8, 2.8);
+      lookLastX = t.clientX; lookLastY = t.clientY;
+    }
   }
-});
+}, {passive:false});
+
 function releaseLookTouch(e){
-  if(e.pointerType !== 'touch') return;
-  if(e.pointerId === lookPointerId) lookPointerId = null;
+  for(const t of e.changedTouches){ if(t.identifier === lookTouchId) lookTouchId = null; }
 }
-canvas.addEventListener('pointerup', releaseLookTouch);
-canvas.addEventListener('pointercancel', releaseLookTouch);
-canvas.addEventListener('pointerleave', releaseLookTouch);
+canvas.addEventListener('touchend', releaseLookTouch);
+canvas.addEventListener('touchcancel', releaseLookTouch);
 
 if(isTouchDevice){
-  // Wires a press-and-hold button: fires onDown while pressed, onUp the moment the finger lifts (even if it slides off the button)
+  // Wires a press-and-hold button: fires onDown on touch, onUp the moment that same
+  // finger lifts. Touch events keep targeting the element the touch started on even if
+  // the finger slides off it, so no pointer-capture bookkeeping is needed here.
   function bindHold(el, onDown, onUp){
-    el.addEventListener('pointerdown', e=>{
+    el.addEventListener('touchstart', e=>{
       e.preventDefault(); e.stopPropagation();
-      try{ el.setPointerCapture(e.pointerId); }catch(err){}
       el.classList.add('active-touch');
       onDown();
-    });
+    }, {passive:false});
     const release = e=>{
       e.preventDefault(); e.stopPropagation();
       el.classList.remove('active-touch');
       onUp();
     };
-    el.addEventListener('pointerup', release);
-    el.addEventListener('pointercancel', release);
-    el.addEventListener('pointerleave', release);
+    el.addEventListener('touchend', release, {passive:false});
+    el.addEventListener('touchcancel', release, {passive:false});
   }
 
   bindHold(document.getElementById('btnUp'),    ()=>keys[controls.forward]=true,  ()=>keys[controls.forward]=false);
@@ -499,7 +540,8 @@ if(isTouchDevice){
   bindHold(document.getElementById('btnRight'),  ()=>keys[controls.right]=true,    ()=>keys[controls.right]=false);
   bindHold(document.getElementById('btnShoot'),  ()=>mouseDown=true,               ()=>mouseDown=false);
 
-  // Best-effort landscape lock (silently ignored on browsers/devices that don't support it - the CSS rotate overlay is the reliable fallback)
+  // Best-effort landscape lock (silently ignored on browsers/devices that don't support it,
+  // e.g. iOS Safari - the CSS rotate overlay is the reliable fallback there)
   window.addEventListener('touchstart', function tryLockOrientation(){
     if(screen.orientation && screen.orientation.lock){ screen.orientation.lock('landscape').catch(()=>{}); }
     window.removeEventListener('touchstart', tryLockOrientation);
@@ -2011,6 +2053,7 @@ function menuLoop(){
   menuTime++; 
   if(isTouchDevice) mobileControlsEl.classList.remove('active');
   if(isTouchDevice) btnFullscreenEl.classList.add('active');
+  if(showAddHomeHint) addHomeHintEl.classList.add('active');
   if(gState==='paused') {
     ctx.save(); ctx.translate(shakeX,shakeY); ctx.clearRect(-30,-30,W+60,H+60);
     drawSky(); drawGround(); drawShoreBoundary(); drawGroundDetails(); drawCeiling();
@@ -2095,6 +2138,7 @@ function menuLoop(){
 function gameLoop(){
   if(isTouchDevice) mobileControlsEl.classList.add('active');
   if(isTouchDevice) btnFullscreenEl.classList.remove('active');
+  addHomeHintEl.classList.remove('active');
   gameTime++;
   if(shakeMag>0){ shakeX=(Math.random()-.5)*shakeMag; shakeY=(Math.random()-.5)*shakeMag; shakeMag*=.83; if(shakeMag<.5){shakeMag=0;shakeX=0;shakeY=0;} }
   ctx.save(); ctx.translate(shakeX,shakeY); ctx.clearRect(-30,-30,W+60,H+60);
