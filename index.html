@@ -23,19 +23,24 @@ canvas{width:100dvw;height:100dvh;} /* dvw/dvh track the real visible area on mo
   -webkit-tap-highlight-color:transparent;
 }
 .mbtn.active-touch{ background:rgba(120,120,140,.65); border-color:rgba(255,255,255,.7); }
-/* Pushed in well past the raw screen edge so iOS's edge-swipe-back gesture doesn't
+/* Sized in vmin (relative to the shorter screen dimension) so the controls stay a
+   sensible, comfortable size instead of dominating a short landscape phone screen.
+   Pushed in well past the raw screen edge so iOS's edge-swipe-back gesture doesn't
    swallow the touch before the left-arrow button ever sees it, and offset by the
    safe-area insets so nothing sits under a notch/home-indicator/rounded corner. */
-#dpad{ position:absolute; left:calc(env(safe-area-inset-left,0px) + 40px); bottom:calc(env(safe-area-inset-bottom,0px) + 18px); width:170px; height:170px; pointer-events:none; }
-#dpad .mbtn{ width:54px; height:54px; font-size:22px; }
-#btnUp{ left:58px; top:0; }
-#btnDown{ left:58px; top:113px; }
-#btnLeft{ left:0; top:58px; }
-#btnRight{ left:113px; top:58px; }
+#dpad{
+  position:absolute; left:calc(env(safe-area-inset-left,0px) + 3vmin); bottom:calc(env(safe-area-inset-bottom,0px) + 3vmin);
+  width:38vmin; height:38vmin; max-width:190px; max-height:190px; pointer-events:none;
+}
+#dpad .mbtn{ width:32%; height:32%; font-size:min(5vmin,22px); }
+#btnUp{ left:34%; top:0; }
+#btnDown{ left:34%; top:66%; }
+#btnLeft{ left:0; top:34%; }
+#btnRight{ left:66%; top:34%; }
 #btnShoot{
-  position:absolute; right:calc(env(safe-area-inset-right,0px) + 30px); bottom:calc(env(safe-area-inset-bottom,0px) + 30px);
-  width:96px; height:96px; border-radius:50%;
-  background:rgba(198,40,40,.55); border:3px solid rgba(255,255,255,.55); font-size:15px;
+  position:absolute; right:calc(env(safe-area-inset-right,0px) + 4vmin); bottom:calc(env(safe-area-inset-bottom,0px) + 4vmin);
+  width:20vmin; height:20vmin; max-width:100px; max-height:100px; min-width:64px; min-height:64px; border-radius:50%;
+  background:rgba(198,40,40,.55); border:3px solid rgba(255,255,255,.55); font-size:min(3.2vmin,15px);
 }
 #btnShoot.active-touch{ background:rgba(239,83,80,.8); }
 
@@ -387,6 +392,7 @@ canvas.addEventListener('click', ()=>{
 });
 
 canvas.addEventListener('mousedown', e=>{
+  if(isTouchDevice) return; // touch taps are fully handled by the dedicated pointerdown handler below; without this guard, mobile Safari's synthetic mousedown re-processes the same tap against whatever screen the pointerdown already switched to
   if(gState==='playing'){ mouseDown=true; return; }
   const r=canvas.getBoundingClientRect();
   const mx=e.clientX-r.left, my=e.clientY-r.top;
